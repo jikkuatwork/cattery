@@ -18,6 +18,7 @@ import (
 	"runtime"
 
 	"github.com/kodeman/cattery/audio"
+	"github.com/kodeman/cattery/phonemize"
 	ort "github.com/yalue/onnxruntime_go"
 )
 
@@ -65,10 +66,19 @@ func main() {
 	}
 	defer ort.DestroyEnvironment()
 
-	// Hardcoded IPA for "Hello, world." (en-US espeak-ng output)
-	phonemes := "həˈloʊ, wˈɜːld."
+	// Text -> phonemes -> tokens
+	text := "Hello, world. This is a test of the Cattery text to speech system."
+	if len(os.Args) > 1 {
+		text = os.Args[1]
+	}
+
+	p := &phonemize.EspeakPhonemizer{Voice: "en-us"}
+	phonemes, err := p.Phonemize(text)
+	if err != nil {
+		log.Fatal("Phonemize: ", err)
+	}
 	tokens := tokenize(phonemes)
-	fmt.Printf("Phonemes: %s\nTokens (%d): %v\n", phonemes, len(tokens), tokens)
+	fmt.Printf("Text: %s\nPhonemes: %s\nTokens (%d): %v\n", text, phonemes, len(tokens), tokens)
 
 	// Load voice style vector — select row indexed by token count
 	style, err := loadVoice(voiceFile, len(tokens))
