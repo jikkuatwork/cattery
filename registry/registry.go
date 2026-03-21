@@ -5,16 +5,17 @@ import "strings"
 
 // Model describes a TTS model available for download.
 type Model struct {
-	ID          string  // e.g. "kokoro-82m-v1.0"
-	Name        string  // e.g. "Kokoro 82M"
-	Description string  // e.g. "High-quality 82M parameter model, int8 quantized"
-	SizeBytes   int64   // expected file size
-	Filename    string  // e.g. "model_quantized.onnx"
-	SHA256      string  // checksum
-	SampleRate  int     // audio output sample rate
-	StyleDim    int     // voice embedding dimension
-	MaxTokens   int     // max token sequence length
-	Voices      []Voice // available voices for this model
+	ID           string  // e.g. "kokoro-82m-v1.0"
+	Name         string  // e.g. "Kokoro 82M"
+	Description  string  // e.g. "High-quality 82M parameter model, int8 quantized"
+	SizeBytes    int64   // expected file size
+	Filename     string  // e.g. "model_quantized.onnx"
+	SHA256       string  // checksum
+	SampleRate   int     // audio output sample rate
+	StyleDim     int     // voice embedding dimension
+	MaxTokens    int     // max token sequence length
+	DefaultVoice string  // ID of the default voice for this model
+	Voices       []Voice // available voices for this model
 }
 
 // Voice describes a voice available for a model.
@@ -31,18 +32,16 @@ type Voice struct {
 // Default is the default model ID.
 const Default = "kokoro-82m-v1.0"
 
-// DefaultVoice is the default voice ID.
-const DefaultVoice = "af_heart"
-
 // Models is the registry of all available models.
 var Models = map[string]*Model{
 	"kokoro-82m-v1.0": {
-		ID:          "kokoro-82m-v1.0",
-		Name:        "Kokoro 82M",
-		Description: "High-quality 82M parameter model, int8 quantized",
-		SizeBytes:   92_361_116,
-		Filename:    "model_quantized.onnx",
-		SHA256:      "fbae9257e1e05ffc727e951ef9b9c98418e6d79f1c9b6b13bd59f5c9028a1478",
+		ID:           "kokoro-82m-v1.0",
+		Name:         "Kokoro 82M",
+		Description:  "High-quality 82M parameter model, int8 quantized",
+		SizeBytes:    92_361_116,
+		Filename:     "model_quantized.onnx",
+		SHA256:       "fbae9257e1e05ffc727e951ef9b9c98418e6d79f1c9b6b13bd59f5c9028a1478",
+		DefaultVoice: "af_heart",
 		SampleRate:  24000,
 		StyleDim:    256,
 		MaxTokens:   510,

@@ -65,7 +65,7 @@ func run() error {
 // --- say ---
 
 func cmdSay(args []string) error {
-	voice := registry.DefaultVoice
+	var voiceFlag string // empty = use model default
 	speed := 1.0
 	output := "output.wav"
 	lang := "en-us"
@@ -77,7 +77,7 @@ func cmdSay(args []string) error {
 		case "--voice":
 			i++
 			if i < len(args) {
-				voice = args[i]
+				voiceFlag = args[i]
 			}
 		case "--speed":
 			i++
@@ -117,9 +117,14 @@ func cmdSay(args []string) error {
 		return fmt.Errorf("unknown model %q\nRun 'cattery models' to see available models", modelID)
 	}
 
-	voiceInfo := model.GetVoice(voice)
+	// Resolve voice: use flag, or model's default
+	if voiceFlag == "" {
+		voiceFlag = model.DefaultVoice
+	}
+	voiceInfo := model.GetVoice(voiceFlag)
 	if voiceInfo == nil {
-		return fmt.Errorf("unknown voice %q for %s\nRun 'cattery voices' to see available voices", voice, model.Name)
+		return fmt.Errorf("unknown voice %q for %s\nRun 'cattery voices --model %s' to see available voices",
+			voiceFlag, model.Name, model.ID)
 	}
 
 	if !phonemize.Available() {
@@ -252,7 +257,7 @@ func cmdVoices(args []string) error {
 				gender = "♂"
 			}
 			def := ""
-			if v.ID == registry.DefaultVoice {
+			if v.ID == model.DefaultVoice {
 				def = " (default)"
 			}
 			fmt.Printf("    %s%-12s %s %-12s %s%s\n", marker, v.Name, gender, v.ID, v.Description, def)
@@ -363,7 +368,7 @@ func cmdDownload(args []string) error {
 	dataDir := paths.DataDir()
 
 	// Download model + default voice
-	defaultVoice := model.GetVoice(registry.DefaultVoice)
+	defaultVoice := model.GetVoice(model.DefaultVoice)
 	if defaultVoice == nil && len(model.Voices) > 0 {
 		defaultVoice = &model.Voices[0]
 	}
