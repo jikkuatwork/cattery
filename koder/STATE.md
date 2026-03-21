@@ -2,11 +2,11 @@
 
 ## Overview
 
-Text-to-speech in pure Go. No cgo, no Python. Tiny binary (~3MB), all runtime deps auto-downloaded on first run.
+Text-to-speech in pure Go. No cgo, no Python. Tiny binary (~8MB), all runtime deps auto-downloaded on first run.
 
 ```
 go install github.com/jikkuatwork/cattery/cmd/cattery@latest
-cattery "Hello, world."    # downloads model/voice/ORT on first run
+cattery "Hello, world."
 ```
 
 ## Stack
@@ -14,7 +14,7 @@ cattery "Hello, world."    # downloads model/voice/ORT on first run
 - **Language**: Go (pure, no cgo)
 - **Inference**: ONNX Runtime 1.24.1+ via `yalue/onnxruntime_go` v1.27.0 (dlopen)
 - **Model**: Kokoro-82M int8 quantized (92MB ONNX)
-- **Phonemization**: espeak-ng via `os/exec` (only remaining system dep)
+- **Phonemization**: espeak-ng via `os/exec` (only system dep)
 - **Audio**: WAV (pure Go writer)
 
 ## Architecture
@@ -22,87 +22,77 @@ cattery "Hello, world."    # downloads model/voice/ORT on first run
 ```
 cattery/
 ├── cmd/
-│   ├── cattery/       # CLI (flags, auto-download, full pipeline)
-│   └── spike/         # Original spike (kept for reference, has timing)
+│   ├── cattery/       # CLI
+│   └── spike/         # Original spike (reference, has timing)
 ├── engine/            # ONNX inference, tokenizer, voice loading
-├── phonemize/         # espeak-ng IPA phonemizer (os/exec)
-├── audio/             # WAV writer (pure Go)
-├── download/          # Auto-download model/voice/ORT with SHA256 verification
+├── phonemize/         # espeak-ng IPA phonemizer
+├── audio/             # Pure Go WAV writer
+├── download/          # Auto-download with progress bars, resume, SHA256
+├── registry/          # Model/voice metadata registry
+├── paths/             # XDG-compliant data directory resolution
 ├── scripts/           # Helper scripts
 └── koder/             # Project tracking
 ```
 
-## Auto-Download (no auth anywhere)
+## CLI Commands
 
-| Asset | Source | URL pattern |
+```
+cattery "Hello, world."          # speak (auto-downloads on first run)
+cattery --voice bella "Hello"    # pick a voice by name or ID
+cattery --speed 1.5 -o out.wav   # speed + output file
+cattery list                     # show models + voices
+cattery status                   # platform, deps, disk usage
+cattery download                 # pre-fetch model + all voices
+```
+
+## Downloads (no auth, stable URLs)
+
+| Asset | Source | Size |
 |---|---|---|
-| Model + voices | `jikkuatwork/cattery-artefacts` (Git LFS) | `github.com/.../raw/main/models/kokoro-82m-v1.0/...` |
-| ORT runtime | Microsoft official releases | `github.com/microsoft/onnxruntime/releases/...` |
+| Model + voices | `jikkuatwork/cattery-artefacts` (Git LFS) | 88MB + 13MB |
+| ORT runtime | Microsoft GitHub Releases | 18MB |
 
-Files cached in `~/.cattery/` after first download.
+All 27 voices now uploaded. Cached in `~/.local/share/cattery/` (XDG).
 
-## Performance (aarch64 VM, 70 tokens → 4.6s audio)
+## Performance (aarch64 VM)
 
-| Phase | Time | % |
-|---|---|---|
-| ORT init | 8ms | 0.2% |
-| Phonemize | 13ms | 0.4% |
-| Session load | 352ms | 9.7% |
-| **Inference** | **3,217ms** | **88.8%** |
-| WAV write | 32ms | 0.9% |
-
-- **RTF**: 0.70x (faster than real-time)
-- **Peak RSS**: 239MB (Go heap: 1MB, rest is ORT/model)
-- **Zero GC cycles** during inference
-
-## Size
-
-| Component | Size | Shipped with |
-|---|---|---|
-| Go binary | 2.7MB | `go install` |
-| libonnxruntime.so | 18MB | auto-download |
-| Model (82M q8) | 89MB | auto-download |
-| Voice (1 file) | 510KB | auto-download |
-
-## Model Details (Kokoro-82M ONNX)
-
-- **Inputs**: `input_ids` int64 [1,seq], `style` float32 [1,256], `speed` float32 [1]
-- **Output**: `waveform` float32 [1,N] at 24kHz
-- **Tokens**: 178 IPA phoneme vocab, padded with 0 at start/end
-- **Voices**: raw float32 .bin files, shape [510,256], indexed by token count
+| Metric | Value |
+|---|---|
+| RTF | 0.70x (faster than real-time) |
+| Peak RSS | 239MB (Go heap: 1MB) |
+| Binary | 8.3MB |
+| First-run download | ~120MB total |
 
 ## Issues
 
 | # | Title | Status | Pri |
 |---|---|---|---|
 | [01](issues/01_onnx_inference_spike.md) | ONNX inference spike | **done** | P0 |
-| [02](issues/02_phonemizer_strategy.md) | Phonemizer strategy | **v1 done** (espeak os/exec) | P0 |
+| [02](issues/02_phonemizer_strategy.md) | Phonemizer strategy | **done** (espeak os/exec) | P0 |
 | [03](issues/03_wav_writer.md) | WAV writer | **done** | P1 |
-| [04](issues/04_cli.md) | CLI + model download | **in progress** | P1 |
+| [04](issues/04_cli.md) | CLI + model download | **done** | P1 |
 | [05](issues/05_cross_platform_build.md) | Cross-platform build | open | P2 |
 
-## What's Done
+## What's Next (CLI polish)
 
-- Full end-to-end pipeline: text → phonemes → tokens → ONNX → WAV
-- Engine package (`engine/`): tokenizer, voice loader, ONNX session wrapper
-- Download package (`download/`): auto-fetch model/voice/ORT with SHA256 verification
-- CLI (`cmd/cattery/`): flags for voice, speed, output, lang — builds & runs
-- Artefacts repo (`jikkuatwork/cattery-artefacts`): model + voice hosted via Git LFS
+These are the immediate next tasks for the CLI:
 
-## What's Next
-
-- **Test CLI end-to-end** with fresh `~/.cattery/` (auto-download flow)
-- **espeak-ng dependency**: only system dep left — explore WASM embed (wazero) or bundled binary
-- **More voices**: upload additional voices to cattery-artefacts
-- **Cross-platform**: test on macOS, verify ORT download for darwin/amd64/arm64
+1. **Clean up progress bars** — show only `23MB / 120MB [========        ]`, no percentage or speed (bar is enough)
+2. **Numeric IDs for models/voices** — models get 01, 02...; voices get 01, 02...; much easier to type than slugs
+3. **Simplify model naming** — "Kokoro" not "Kokoro 82M" (user doesn't care about params)
+4. **Add --male / --female flag** — filter voices by gender
+5. **Random voice selection** — if no voice specified, pick a random one (instead of always defaulting to Heart)
+6. **Reduce noise** — strip unnecessary output, keep it minimal
 
 ## Key Decisions Made
 
-- **No pure Go ONNX**: GoMLX/gonnx lack FFT/ISTFT ops needed by Kokoro. ORT via dlopen is the only viable path.
-- **Download on first run**: binary stays ~3MB, runtime deps fetched as needed. No embedding.
-- **Separate artefacts repo**: `cattery-artefacts` holds binaries via Git LFS. Keeps source repo small. Stable URLs, no auth.
+- **No pure Go ONNX**: GoMLX/gonnx lack FFT/ISTFT ops. ORT via dlopen is the only path.
+- **Download on first run**: binary stays ~8MB, runtime deps fetched as needed.
+- **Separate artefacts repo**: `cattery-artefacts` holds binaries via Git LFS. No auth.
 - **ORT from Microsoft**: not mirrored — their GitHub Release URLs are permanent.
-- **espeak-ng via os/exec**: simplest phonemizer. Works now. WASM embed deferred.
+- **espeak-ng via os/exec**: simplest phonemizer. WASM embed deferred.
+- **Per-model default voice**: each model carries its own default, no global constant.
+- **All voices downloaded by `cattery download`**: they're ~510KB each, no reason to be stingy.
 
 ## Research
 

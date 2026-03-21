@@ -4,22 +4,32 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/term"
 )
 
+// ANSI color codes
+const (
+	colorReset  = "\033[0m"
+	colorDim    = "\033[2m"
+	colorGreen  = "\033[32m"
+	colorCyan   = "\033[36m"
+	colorWhite  = "\033[97m"
+	colorBGDim  = "\033[48;5;236m"
+	colorBGDone = "\033[48;5;22m"
+)
+
 // progressWriter wraps an io.Writer and prints a progress bar to stderr.
 type progressWriter struct {
-	w           io.Writer
-	label       string
-	total       int64
-	written     int64
-	start       time.Time
-	mu          sync.Mutex
-	lastUpdate  time.Time
+	w          io.Writer
+	label      string
+	total      int64
+	written    int64
+	start      time.Time
+	mu         sync.Mutex
+	lastUpdate time.Time
 }
 
 func newProgressWriter(w io.Writer, label string, total int64) *progressWriter {
@@ -36,8 +46,7 @@ func (pw *progressWriter) Write(p []byte) (int, error) {
 	pw.mu.Lock()
 	pw.written += int64(n)
 	now := time.Now()
-	// Throttle updates to 10Hz
-	if now.Sub(pw.lastUpdate) > 100*time.Millisecond || pw.written == pw.total {
+	if now.Sub(pw.lastUpdate) > 80*time.Millisecond || pw.written == pw.total {
 		pw.render()
 		pw.lastUpdate = now
 	}
@@ -47,46 +56,73 @@ func (pw *progressWriter) Write(p []byte) (int, error) {
 
 func (pw *progressWriter) render() {
 	width := termWidth()
+
 	elapsed := time.Since(pw.start).Seconds()
-	if elapsed == 0 {
+	if elapsed < 0.001 {
 		elapsed = 0.001
 	}
 
 	speed := float64(pw.written) / elapsed
-	speedStr := formatBytes(int64(speed)) + "/s"
+	done := pw.written == pw.total && pw.total > 0
 
 	var pct float64
 	if pw.total > 0 {
 		pct = float64(pw.written) / float64(pw.total) * 100
 	}
 
-	status := fmt.Sprintf("%s  %s / %s  %s  %.0f%%",
-		pw.label,
-		formatBytes(pw.written),
-		formatBytes(pw.total),
-		speedStr,
-		pct,
-	)
+	// Fixed-width formatting to prevent layout jumping
+	// "  Label           88.1 MB / 88.1 MB   12.3 MB/s  100%  [████████████████████]"
+	label := fmt.Sprintf("%-16s", truncate(pw.label, 16))
+	sizes := fmt.Sprintf("%8s / %-8s", formatBytes(pw.written), formatBytes(pw.total))
+	speedStr := fmt.Sprintf("%8s/s", formatBytes(int64(speed)))
+	pctStr := fmt.Sprintf("%3.0f%%", pct)
 
-	// Progress bar fills remaining space
-	barSpace := width - len(status) - 4 // 4 for " [] "
-	if barSpace < 10 {
-		barSpace = 10
+	// Bar width: total width - fixed parts - padding
+	// label(16) + sizes(19) + speed(10) + pct(4) + bar borders(2) + spaces(6) = 57
+	barWidth := width - 57
+	if barWidth < 10 {
+		barWidth = 10
 	}
 
 	filled := 0
 	if pw.total > 0 {
-		filled = int(float64(barSpace) * float64(pw.written) / float64(pw.total))
+		filled = int(float64(barWidth) * pct / 100)
 	}
-	if filled > barSpace {
-		filled = barSpace
+	if filled > barWidth {
+		filled = barWidth
 	}
 
-	bar := "[" + strings.Repeat("█", filled) + strings.Repeat("░", barSpace-filled) + "]"
+	// Build colored bar
+	var bar string
+	if done {
+		bar = colorGreen + "["
+		for i := 0; i < barWidth; i++ {
+			bar += "█"
+		}
+		bar += "]" + colorReset
+	} else {
+		bar = colorDim + "[" + colorReset + colorCyan
+		for i := 0; i < filled; i++ {
+			bar += "█"
+		}
+		bar += colorDim
+		for i := filled; i < barWidth; i++ {
+			bar += "░"
+		}
+		bar += "]" + colorReset
+	}
 
-	fmt.Fprintf(os.Stderr, "\r%s %s", status, bar)
+	// Color the parts
+	labelColor := colorWhite
+	if done {
+		labelColor = colorGreen
+	}
 
-	if pw.written == pw.total {
+	fmt.Fprintf(os.Stderr, "\r%s%s%s  %s  %s  %s  %s",
+		labelColor, label, colorReset,
+		sizes, speedStr, pctStr, bar)
+
+	if done {
 		fmt.Fprintln(os.Stderr)
 	}
 }
@@ -94,9 +130,16 @@ func (pw *progressWriter) render() {
 func (pw *progressWriter) finish() {
 	pw.mu.Lock()
 	defer pw.mu.Unlock()
-	if pw.written < pw.total {
+	if pw.written < pw.total || pw.total == 0 {
 		fmt.Fprintln(os.Stderr)
 	}
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-1] + "…"
 }
 
 func formatBytes(b int64) string {
