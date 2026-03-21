@@ -99,6 +99,8 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 
 ## What's Next
 
+- Implementation plans for `#07`, `#10`, and `#11` now live in
+  `koder/plans/`.
 - License compliance follow-through (#07) — add project license + artefact notices; blocks distribution
   Audit baseline is now captured in `THIRD_PARTY_NOTICES.md`.
 - Server API audit (#10) + auth (#11) — before apps consume it
