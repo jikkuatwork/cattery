@@ -1,8 +1,8 @@
-# Cattery — Pure Go TTS Library
+# Cattery — Go TTS Library
 
 ## Overview
 
-Text-to-speech in pure Go. No cgo, no Python. Tiny binary (~8MB), all runtime deps auto-downloaded on first run.
+Text-to-speech in Go. No Python. Tiny binary (~8MB). ONNX Runtime, model, and voice files auto-download on first run; `espeak-ng` remains a system dependency.
 
 ```
 go install github.com/jikkuatwork/cattery/cmd/cattery@latest
@@ -11,7 +11,7 @@ cattery "Hello, world."
 
 ## Stack
 
-- **Language**: Go (cgo only for malloc_trim)
+- **Language**: Go (small cgo shim for `malloc_trim` during ORT teardown)
 - **Inference**: ONNX Runtime 1.24.1+ via `yalue/onnxruntime_go` v1.27.0 (dlopen)
 - **Model**: Kokoro-82M int8 quantized (92MB ONNX)
 - **Phonemization**: espeak-ng via `os/exec` (only system dep)
@@ -27,7 +27,7 @@ cattery/
 ├── engine/            # ONNX inference, tokenizer, voice loading
 ├── phonemize/         # espeak-ng IPA phonemizer
 ├── audio/             # Pure Go WAV writer
-├── download/          # Auto-download with progress bars, resume, SHA256
+├── download/          # Auto-download with progress bars and checksum verification where hashes are recorded
 ├── server/            # REST API server with lazy engine pool
 ├── preflight/         # System readiness checks (RAM, deps)
 ├── registry/          # Model/voice metadata registry
@@ -61,7 +61,7 @@ cattery serve --idle-timeout 60  # evict engines after 60s idle
 | Model + voices | `jikkuatwork/cattery-artefacts` (Git LFS) | 88MB + 13MB |
 | ORT runtime | Microsoft GitHub Releases | 18MB |
 
-All 27 voices now uploaded. Cached in `~/.cattery/`.
+Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.cattery/`; `espeak-ng` is not bundled.
 
 ## Performance (aarch64 VM, 6-core)
 
@@ -106,18 +106,18 @@ All 27 voices now uploaded. Cached in `~/.cattery/`.
 ## Key Decisions Made
 
 - **No pure Go ONNX**: GoMLX/gonnx lack FFT/ISTFT ops. ORT via dlopen is the only path.
-- **Download on first run**: binary stays ~8MB, runtime deps fetched as needed.
+- **Download on first run**: binary stays ~8MB, while ORT/model/voice artefacts are fetched as needed. `espeak-ng` stays external.
 - **Separate artefacts repo**: `cattery-artefacts` holds binaries via Git LFS. No auth.
 - **ORT from Microsoft**: not mirrored — their GitHub Release URLs are permanent.
 - **espeak-ng via os/exec**: simplest phonemizer. WASM embed deferred.
 - **Random voice by default**: no voice flag = random pick; `--male`/`--female` to filter.
-- **All voices downloaded by `cattery download`**: they're ~510KB each, no reason to be stingy.
-- **~/.cattery/ for data**: simple, same on all platforms.
+- **Full voice set by default**: voice files are small (~510KB each), so the UX is optimized around fetching the whole set rather than micromanaging individual voices.
+- **~/.cattery/ for data**: simple default for current platforms.
 - **ORT stderr suppressed**: redirect fd during init to hide C-level warnings.
-- **WAV bytes, not base64**: REST API streams raw WAV with Content-Type: audio/wav. 33% smaller than base64.
+- **WAV bytes, not base64**: REST API returns raw WAV with Content-Type: audio/wav. 33% smaller than base64.
 - **Lazy engine pool**: engines created on first request, evicted after idle timeout. Full ORT dlclose + malloc_trim reclaims C heap.
 - **Shared char budget**: total characters across all queued requests bounded (default 500). Caps peak RSS regardless of request distribution.
-- **Preflight checks**: `preflight.Check()` verifies RAM, espeak-ng, model files before destabilizing the host.
+- **Preflight package**: checks RAM, espeak-ng, model files, and ORT presence; current request handling uses the memory gate and status/CLI expose the rest.
 - **Module path**: `github.com/jikkuatwork/cattery` — matches repo URL for `go get`.
 
 ## Research
