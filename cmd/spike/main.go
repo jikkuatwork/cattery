@@ -19,8 +19,9 @@ import (
 	"time"
 
 	"github.com/jikkuatwork/cattery/audio"
+	"github.com/jikkuatwork/cattery/ort"
 	"github.com/jikkuatwork/cattery/phonemize"
-	ort "github.com/yalue/onnxruntime_go"
+	ortgo "github.com/yalue/onnxruntime_go"
 )
 
 // Vocab: phoneme-to-token mapping from Kokoro's config.json.
@@ -65,11 +66,10 @@ func main() {
 
 	// --- ORT Initialization ---
 	t0 := time.Now()
-	ort.SetSharedLibraryPath(libPath)
-	if err := ort.InitializeEnvironment(); err != nil {
-		log.Fatal("InitializeEnvironment:", err)
+	if err := ort.Init(libPath); err != nil {
+		log.Fatal("ort.Init:", err)
 	}
-	defer ort.DestroyEnvironment()
+	defer ort.Shutdown()
 	fmt.Printf("[TIMING] ORT init:          %v\n", time.Since(t0))
 
 	// --- Phonemization ---
@@ -103,19 +103,19 @@ func main() {
 	seqLen := int64(len(padded))
 
 	// Create input tensors
-	tokenTensor, err := ort.NewTensor(ort.NewShape(1, seqLen), padded)
+	tokenTensor, err := ortgo.NewTensor(ortgo.NewShape(1, seqLen), padded)
 	if err != nil {
 		log.Fatal("NewTensor(tokens): ", err)
 	}
 	defer tokenTensor.Destroy()
 
-	styleTensor, err := ort.NewTensor(ort.NewShape(1, int64(styleDim)), style)
+	styleTensor, err := ortgo.NewTensor(ortgo.NewShape(1, int64(styleDim)), style)
 	if err != nil {
 		log.Fatal("NewTensor(style): ", err)
 	}
 	defer styleTensor.Destroy()
 
-	speedTensor, err := ort.NewTensor(ort.NewShape(1), []float32{1.0})
+	speedTensor, err := ortgo.NewTensor(ortgo.NewShape(1), []float32{1.0})
 	if err != nil {
 		log.Fatal("NewTensor(speed): ", err)
 	}
@@ -123,7 +123,7 @@ func main() {
 
 	// --- Session Creation (model loading) ---
 	t0 = time.Now()
-	session, err := ort.NewDynamicAdvancedSession(
+	session, err := ortgo.NewDynamicAdvancedSession(
 		modelFile,
 		[]string{"input_ids", "style", "speed"},
 		[]string{"waveform"},
@@ -138,9 +138,9 @@ func main() {
 	// --- Inference ---
 	fmt.Println("Running inference...")
 	t0 = time.Now()
-	outputs := []ort.Value{nil}
+	outputs := []ortgo.Value{nil}
 	err = session.Run(
-		[]ort.Value{tokenTensor, styleTensor, speedTensor},
+		[]ortgo.Value{tokenTensor, styleTensor, speedTensor},
 		outputs,
 	)
 	if err != nil {
@@ -150,7 +150,7 @@ func main() {
 	defer outputs[0].Destroy()
 	fmt.Printf("[TIMING] Inference:         %v\n", inferenceTime)
 
-	audioTensor, ok := outputs[0].(*ort.Tensor[float32])
+	audioTensor, ok := outputs[0].(*ortgo.Tensor[float32])
 	if !ok {
 		log.Fatal("Output is not float32 tensor")
 	}

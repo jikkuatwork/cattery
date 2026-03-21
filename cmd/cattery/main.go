@@ -22,6 +22,7 @@ import (
 	"github.com/jikkuatwork/cattery/audio"
 	"github.com/jikkuatwork/cattery/download"
 	"github.com/jikkuatwork/cattery/engine"
+	"github.com/jikkuatwork/cattery/ort"
 	"github.com/jikkuatwork/cattery/paths"
 	"github.com/jikkuatwork/cattery/phonemize"
 	"github.com/jikkuatwork/cattery/registry"
@@ -224,10 +225,10 @@ func cmdSpeak(args []string) error {
 		return err
 	}
 
-	if err := engine.Init(files.ORTLib); err != nil {
+	if err := ort.Init(files.ORTLib); err != nil {
 		return fmt.Errorf("init ORT: %w", err)
 	}
-	defer engine.Shutdown()
+	defer ort.Shutdown()
 
 	eng, err := engine.New(files.ModelPath)
 	if err != nil {

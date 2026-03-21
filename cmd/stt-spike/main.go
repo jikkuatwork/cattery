@@ -20,10 +20,11 @@ import (
 
 	"github.com/jikkuatwork/cattery/download"
 	"github.com/jikkuatwork/cattery/engine"
+	"github.com/jikkuatwork/cattery/ort"
 	"github.com/jikkuatwork/cattery/paths"
 	"github.com/jikkuatwork/cattery/phonemize"
 	"github.com/jikkuatwork/cattery/registry"
-	ort "github.com/yalue/onnxruntime_go"
+	ortgo "github.com/yalue/onnxruntime_go"
 )
 
 const (
@@ -50,7 +51,7 @@ var vocab map[int]string
 type kvCache struct {
 	// Each layer has 4 tensors: decoder.key, decoder.value, encoder.key, encoder.value
 	// Indexed as [layer][0=dec_k, 1=dec_v, 2=enc_k, 3=enc_v]
-	tensors [numLayers][4]ort.Value
+	tensors [numLayers][4]ortgo.Value
 }
 
 func (kv *kvCache) destroy() {
@@ -100,13 +101,13 @@ func main() {
 
 	// Step 4: Init ORT + load encoder
 	fmt.Println("\n--- Step 4: Init ORT + load encoder ---")
-	if err := engine.Init(res.ORTLib); err != nil {
-		log.Fatal("engine.Init: ", err)
+	if err := ort.Init(res.ORTLib); err != nil {
+		log.Fatal("ort.Init: ", err)
 	}
-	defer engine.Shutdown()
+	defer ort.Shutdown()
 
 	t0 := time.Now()
-	encSession, err := ort.NewDynamicAdvancedSession(
+	encSession, err := ortgo.NewDynamicAdvancedSession(
 		encPath,
 		[]string{"input_values"},
 		[]string{"last_hidden_state"},
@@ -124,7 +125,7 @@ func main() {
 	fmt.Printf("Decoder inputs: %d, outputs: %d\n", len(decInputNames), len(decOutputNames))
 
 	t0 = time.Now()
-	decSession, err := ort.NewDynamicAdvancedSession(
+	decSession, err := ortgo.NewDynamicAdvancedSession(
 		decPath,
 		decInputNames,
 		decOutputNames,
@@ -152,20 +153,20 @@ func main() {
 	// Step 8: Run encoder
 	fmt.Println("\n--- Step 8: Run encoder ---")
 	t0 = time.Now()
-	audioTensor, err := ort.NewTensor(ort.NewShape(1, int64(len(resampled))), resampled)
+	audioTensor, err := ortgo.NewTensor(ortgo.NewShape(1, int64(len(resampled))), resampled)
 	if err != nil {
 		log.Fatal("NewTensor(audio): ", err)
 	}
 	defer audioTensor.Destroy()
 
-	encOutputs := []ort.Value{nil}
-	if err := encSession.Run([]ort.Value{audioTensor}, encOutputs); err != nil {
+	encOutputs := []ortgo.Value{nil}
+	if err := encSession.Run([]ortgo.Value{audioTensor}, encOutputs); err != nil {
 		log.Fatal("Encoder run: ", err)
 	}
 	defer encOutputs[0].Destroy()
 	fmt.Printf("[OK] Encoder: %v\n", time.Since(t0))
 
-	encHidden, ok := encOutputs[0].(*ort.Tensor[float32])
+	encHidden, ok := encOutputs[0].(*ortgo.Tensor[float32])
 	if !ok {
 		log.Fatal("Encoder output is not float32")
 	}
@@ -222,7 +223,7 @@ func decoderIONames() (inputs, outputs []string) {
 }
 
 // transcribe runs autoregressive decoding with KV cache.
-func transcribe(dec *ort.DynamicAdvancedSession, encHidden ort.Value, encSeqLen int64) []int64 {
+func transcribe(dec *ortgo.DynamicAdvancedSession, encHidden ortgo.Value, encSeqLen int64) []int64 {
 	tokens := []int64{bosToken}
 
 	var cache kvCache
@@ -236,23 +237,23 @@ func transcribe(dec *ort.DynamicAdvancedSession, encHidden ort.Value, encSeqLen 
 			inputTokens = []int64{tokens[len(tokens)-1]}
 		}
 
-		idsTensor, err := ort.NewTensor(ort.NewShape(1, int64(len(inputTokens))), inputTokens)
+		idsTensor, err := ortgo.NewTensor(ortgo.NewShape(1, int64(len(inputTokens))), inputTokens)
 		if err != nil {
 			log.Fatalf("step %d: create ids tensor: %v", step, err)
 		}
 
 		// Build KV cache tensors
-		var kvInputs [numLayers][4]ort.Value
+		var kvInputs [numLayers][4]ortgo.Value
 		var ownKV bool // whether we created zero tensors that need cleanup
 
 		if step == 0 {
 			// First pass: zero-sized KV cache for decoder, zero for encoder
 			ownKV = true
 			for l := 0; l < numLayers; l++ {
-				kvInputs[l][0], _ = ort.NewTensor(ort.NewShape(1, int64(numHeads), 0, int64(headDim)), []float32{})
-				kvInputs[l][1], _ = ort.NewTensor(ort.NewShape(1, int64(numHeads), 0, int64(headDim)), []float32{})
-				kvInputs[l][2], _ = ort.NewTensor(ort.NewShape(1, int64(numHeads), 0, int64(headDim)), []float32{})
-				kvInputs[l][3], _ = ort.NewTensor(ort.NewShape(1, int64(numHeads), 0, int64(headDim)), []float32{})
+				kvInputs[l][0], _ = ortgo.NewTensor(ortgo.NewShape(1, int64(numHeads), 0, int64(headDim)), []float32{})
+				kvInputs[l][1], _ = ortgo.NewTensor(ortgo.NewShape(1, int64(numHeads), 0, int64(headDim)), []float32{})
+				kvInputs[l][2], _ = ortgo.NewTensor(ortgo.NewShape(1, int64(numHeads), 0, int64(headDim)), []float32{})
+				kvInputs[l][3], _ = ortgo.NewTensor(ortgo.NewShape(1, int64(numHeads), 0, int64(headDim)), []float32{})
 			}
 		} else {
 			// Subsequent: use cache from previous step
@@ -262,10 +263,10 @@ func transcribe(dec *ort.DynamicAdvancedSession, encHidden ort.Value, encSeqLen 
 
 		// use_cache_branch
 		useCacheVal := step > 0
-		useCacheTensor, _ := ort.NewTensor(ort.NewShape(1), []bool{useCacheVal})
+		useCacheTensor, _ := ortgo.NewTensor(ortgo.NewShape(1), []bool{useCacheVal})
 
 		// Assemble inputs: input_ids, encoder_hidden_states, [kv pairs...], use_cache_branch
-		inputs := make([]ort.Value, 0, 3+numLayers*4)
+		inputs := make([]ortgo.Value, 0, 3+numLayers*4)
 		inputs = append(inputs, idsTensor, encHidden)
 		for l := 0; l < numLayers; l++ {
 			inputs = append(inputs, kvInputs[l][0], kvInputs[l][1], kvInputs[l][2], kvInputs[l][3])
@@ -274,7 +275,7 @@ func transcribe(dec *ort.DynamicAdvancedSession, encHidden ort.Value, encSeqLen 
 
 		// Outputs: logits + present KV
 		numOutputs := 1 + numLayers*4
-		outputs := make([]ort.Value, numOutputs)
+		outputs := make([]ortgo.Value, numOutputs)
 
 		err = dec.Run(inputs, outputs)
 
@@ -295,7 +296,7 @@ func transcribe(dec *ort.DynamicAdvancedSession, encHidden ort.Value, encSeqLen 
 		}
 
 		// Extract logits
-		logitsTensor, ok := outputs[0].(*ort.Tensor[float32])
+		logitsTensor, ok := outputs[0].(*ortgo.Tensor[float32])
 		if !ok {
 			fmt.Println("[WARN] Unexpected logits type")
 			for _, o := range outputs {

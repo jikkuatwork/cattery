@@ -23,6 +23,7 @@ import (
 	"github.com/jikkuatwork/cattery/audio"
 	"github.com/jikkuatwork/cattery/download"
 	"github.com/jikkuatwork/cattery/engine"
+	"github.com/jikkuatwork/cattery/ort"
 	"github.com/jikkuatwork/cattery/paths"
 	"github.com/jikkuatwork/cattery/phonemize"
 	"github.com/jikkuatwork/cattery/preflight"
@@ -59,10 +60,10 @@ type Server struct {
 	failed    atomic.Int64
 
 	// Lazy engine pool — engines created on demand, evicted after idle timeout.
-	engines    chan *engine.Engine // idle engines ready to use
-	poolMu     sync.Mutex
-	poolCount  int // total engines created (idle + active)
-	idleTimer  *time.Timer
+	engines   chan *engine.Engine // idle engines ready to use
+	poolMu    sync.Mutex
+	poolCount int // total engines created (idle + active)
+	idleTimer *time.Timer
 
 	dataDir   string
 	modelPath string
@@ -162,7 +163,7 @@ func New(cfg Config) (*Server, error) {
 	// Pre-warm: init ORT + create engines upfront.
 	// Lazy mode: ORT loaded on first request.
 	if cfg.KeepAlive {
-		if err := engine.Init(result.ORTLib); err != nil {
+		if err := ort.Init(result.ORTLib); err != nil {
 			return nil, fmt.Errorf("init ORT: %w", err)
 		}
 		for i := 0; i < cfg.Workers; i++ {
@@ -214,7 +215,7 @@ func (s *Server) Shutdown() {
 	}
 	s.poolMu.Unlock()
 	s.evictEngines()
-	engine.Shutdown()
+	ort.Shutdown()
 }
 
 // --- handlers ---
@@ -386,7 +387,7 @@ func (s *Server) borrowEngine() (*engine.Engine, error) {
 		s.poolMu.Unlock()
 
 		// Re-init ORT if it was shut down (idempotent if already loaded).
-		if err := engine.Init(s.ortLib); err != nil {
+		if err := ort.Init(s.ortLib); err != nil {
 			s.poolMu.Lock()
 			s.poolCount--
 			s.poolMu.Unlock()
@@ -442,7 +443,7 @@ func (s *Server) evictEngines() {
 			s.idleTimer = nil
 			// If all engines evicted, fully shut down ORT to reclaim C memory.
 			if s.poolCount == 0 {
-				engine.Shutdown()
+				ort.Shutdown()
 			}
 			s.poolMu.Unlock()
 			if closed > 0 {
