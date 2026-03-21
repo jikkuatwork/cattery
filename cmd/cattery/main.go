@@ -2,13 +2,12 @@
 //
 // Usage:
 //
-//	cattery say "Hello, world."
-//	cattery say --voice bella --speed 1.2 --output greeting.wav "Hello!"
-//	cattery models
+//	cattery "Hello, world."
+//	cattery --voice bella --speed 1.2 -o greeting.wav "Hello!"
 //	cattery voices
-//	cattery voices --model kokoro-82m-v1.0
+//	cattery models
 //	cattery status
-//	cattery download kokoro-82m-v1.0
+//	cattery download
 package main
 
 import (
@@ -42,13 +41,12 @@ func run() error {
 		return nil
 	}
 
+	// Subcommands (info/management only)
 	switch args[0] {
-	case "say":
-		return cmdSay(args[1:])
-	case "models":
-		return cmdModels()
 	case "voices":
 		return cmdVoices(args[1:])
+	case "models":
+		return cmdModels()
 	case "status":
 		return cmdStatus(args[1:])
 	case "download":
@@ -56,16 +54,24 @@ func run() error {
 	case "help", "--help", "-h":
 		printUsage()
 		return nil
-	default:
-		// Bare text without "say" — treat as implicit say
-		return cmdSay(args)
+	case "version", "--version":
+		fmt.Println("cattery 0.1.0")
+		return nil
 	}
+
+	// Check for likely typos of subcommands before treating as text
+	if len(args) == 1 && !strings.HasPrefix(args[0], "--") && looksLikeCommand(args[0]) {
+		return fmt.Errorf("unknown command %q\nDid you mean one of: voices, models, status, download, help?", args[0])
+	}
+
+	// Primary action: synthesize text
+	return cmdSpeak(args)
 }
 
-// --- say ---
+// --- speak (primary action) ---
 
-func cmdSay(args []string) error {
-	var voiceFlag string // empty = use model default
+func cmdSpeak(args []string) error {
+	var voiceFlag string
 	speed := 1.0
 	output := "output.wav"
 	lang := "en-us"
@@ -109,7 +115,7 @@ func cmdSay(args []string) error {
 
 	text := strings.Join(textParts, " ")
 	if text == "" {
-		return fmt.Errorf("no text provided\nUsage: cattery say \"Hello, world.\"")
+		return fmt.Errorf("no text provided\nUsage: cattery \"Hello, world.\"")
 	}
 
 	model := registry.Get(modelID)
@@ -117,7 +123,6 @@ func cmdSay(args []string) error {
 		return fmt.Errorf("unknown model %q\nRun 'cattery models' to see available models", modelID)
 	}
 
-	// Resolve voice: use flag, or model's default
 	if voiceFlag == "" {
 		voiceFlag = model.DefaultVoice
 	}
@@ -238,7 +243,6 @@ func cmdVoices(args []string) error {
 	fmt.Printf("Voices for %s (%s):\n\n", model.Name, model.ID)
 
 	byAccent := model.VoicesByAccent()
-	// Stable accent ordering
 	accents := []string{"American", "British", "European", "Asian", "Other"}
 	for _, accent := range accents {
 		voices, ok := byAccent[accent]
@@ -265,7 +269,7 @@ func cmdVoices(args []string) error {
 		fmt.Println()
 	}
 
-	fmt.Println("  Use --voice with name or ID: cattery say --voice bella \"Hello\"")
+	fmt.Println("  Use --voice with name or ID: cattery --voice bella \"Hello\"")
 	return nil
 }
 
@@ -289,12 +293,10 @@ func cmdStatus(args []string) error {
 	fmt.Println("cattery status")
 	fmt.Println()
 
-	// Platform
 	fmt.Printf("  Platform:      %s/%s\n", goruntime.GOOS, goruntime.GOARCH)
 	fmt.Printf("  Data dir:      %s\n", dataDir)
 	fmt.Println()
 
-	// Dependencies
 	if phonemize.Available() {
 		fmt.Println("  espeak-ng:     ✓ installed")
 	} else {
@@ -309,7 +311,6 @@ func cmdStatus(args []string) error {
 	}
 	fmt.Println()
 
-	// Models
 	fmt.Println("  Models:")
 	for _, m := range registry.Models {
 		modelPath := paths.ModelFile(dataDir, m.ID, m.Filename)
@@ -325,7 +326,6 @@ func cmdStatus(args []string) error {
 		}
 		fmt.Printf("    %s %-20s %s%s\n", marker, m.Name, sizeStr, def)
 
-		// Count downloaded voices for this model
 		dlVoices := 0
 		for _, v := range m.Voices {
 			vPath := paths.VoiceFile(dataDir, m.ID, v.ID)
@@ -337,7 +337,6 @@ func cmdStatus(args []string) error {
 	}
 	fmt.Println()
 
-	// Disk usage
 	totalSize := dirSize(dataDir)
 	fmt.Printf("  Disk usage:    %s\n", formatSize(totalSize))
 
@@ -347,27 +346,32 @@ func cmdStatus(args []string) error {
 // --- download ---
 
 func cmdDownload(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("specify a model to download\nUsage: cattery download kokoro-82m-v1.0\nRun 'cattery models' to see available models")
+	modelID := registry.Default
+	allVoices := false
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--model":
+			i++
+			if i < len(args) {
+				modelID = args[i]
+			}
+		case "--all-voices":
+			allVoices = true
+		default:
+			if !strings.HasPrefix(args[i], "--") {
+				modelID = args[i]
+			}
+		}
 	}
 
-	modelID := args[0]
 	model := registry.Get(modelID)
 	if model == nil {
 		return fmt.Errorf("unknown model %q\nRun 'cattery models' to see available models", modelID)
 	}
 
-	// Parse --voices flag to download all voices
-	allVoices := false
-	for _, a := range args[1:] {
-		if a == "--all-voices" {
-			allVoices = true
-		}
-	}
-
 	dataDir := paths.DataDir()
 
-	// Download model + default voice
 	defaultVoice := model.GetVoice(model.DefaultVoice)
 	if defaultVoice == nil && len(model.Voices) > 0 {
 		defaultVoice = &model.Voices[0]
@@ -377,15 +381,16 @@ func cmdDownload(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "  ✓ %s model downloaded\n", model.Name)
+	fmt.Fprintf(os.Stderr, "  ✓ %s model ready\n", model.Name)
 	fmt.Fprintf(os.Stderr, "  ✓ Voice: %s\n", defaultVoice.Name)
 
 	if allVoices {
-		for _, v := range model.Voices {
+		for i := range model.Voices {
+			v := &model.Voices[i]
 			if v.ID == defaultVoice.ID {
 				continue
 			}
-			_, err := download.Ensure(dataDir, model, &v)
+			_, err := download.Ensure(dataDir, model, v)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "  ✗ Voice %s: %v\n", v.Name, err)
 				continue
@@ -403,34 +408,57 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `cattery — text-to-speech from the command line
 
 Usage:
-  cattery say "Hello, world."                  Speak text
-  cattery say --voice bella "Hi there"         Use a specific voice
-  cattery say --speed 1.5 --output out.wav "." Custom speed and output
+  cattery "Hello, world."                      Speak text to output.wav
+  cattery --voice bella "Hi there"             Use a specific voice
+  cattery --speed 1.5 -o out.wav "Fast talk"   Custom speed and output
 
 Commands:
-  say          Synthesize text to audio (default if omitted)
-  models       List available models
   voices       List available voices
+  models       List available models
   status       Show system status and downloaded files
-  download     Pre-download a model and voices
+  download     Pre-download model and voices
   help         Show this help
 
-Flags (for say):
-  --voice NAME     Voice name or ID (default: heart)
+Flags:
+  --voice NAME     Voice name or ID (default: model-specific)
   --speed FLOAT    Speech speed, 0.5-2.0 (default: 1.0)
-  --output FILE    Output WAV file (default: output.wav)
+  --output, -o     Output WAV file (default: output.wav)
   --lang LANG      Phonemizer language (default: en-us)
   --model ID       Model to use (default: kokoro-82m-v1.0)
-
-Flags (for voices, status):
-  --model ID       Show voices/status for a specific model
-
-Flags (for download):
-  --all-voices     Download all voices, not just the default
 
 On first run, cattery downloads the model (~92MB) and runtime (~18MB).
 No accounts or API keys required.
 `)
+}
+
+// looksLikeCommand returns true if a single-word argument looks like
+// it was meant to be a subcommand rather than text to speak.
+// A single lowercase word with no spaces is suspicious.
+func looksLikeCommand(s string) bool {
+	if strings.Contains(s, " ") {
+		return false
+	}
+	// Known commands for fuzzy matching
+	commands := []string{"voices", "models", "status", "download", "help", "version"}
+	lower := strings.ToLower(s)
+	for _, cmd := range commands {
+		if lower == cmd {
+			return true
+		}
+		// Simple edit distance: if >60% of chars match, probably a typo
+		if len(lower) >= 3 && len(lower) <= len(cmd)+2 {
+			matches := 0
+			for i := 0; i < len(lower) && i < len(cmd); i++ {
+				if lower[i] == cmd[i] {
+					matches++
+				}
+			}
+			if float64(matches)/float64(len(cmd)) > 0.5 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // --- helpers ---
