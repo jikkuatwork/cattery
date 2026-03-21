@@ -4,35 +4,10 @@ package paths
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 )
 
-// DataDir returns the default data directory for cattery.
-//
-//	Linux:   $XDG_DATA_HOME/cattery (default ~/.local/share/cattery)
-//	macOS:   ~/Library/Application Support/cattery
-//	Windows: %APPDATA%/cattery
-//	Other:   ~/.cattery
+// DataDir returns the data directory for cattery (~/.cattery).
 func DataDir() string {
-	switch runtime.GOOS {
-	case "linux":
-		if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
-			return filepath.Join(xdg, "cattery")
-		}
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, ".local", "share", "cattery")
-		}
-	case "darwin":
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, "Library", "Application Support", "cattery")
-		}
-	case "windows":
-		if appdata := os.Getenv("APPDATA"); appdata != "" {
-			return filepath.Join(appdata, "cattery")
-		}
-	}
-
-	// Fallback
 	if home, err := os.UserHomeDir(); err == nil {
 		return filepath.Join(home, ".cattery")
 	}

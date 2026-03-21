@@ -12,6 +12,7 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
@@ -59,7 +60,7 @@ func run() error {
 
 	// Check for likely typos of subcommands before treating as text
 	if len(args) == 1 && !strings.HasPrefix(args[0], "--") && looksLikeCommand(args[0]) {
-		return fmt.Errorf("unknown command %q\nDid you mean one of: voices, models, status, download, help?", args[0])
+		return fmt.Errorf("unknown command %q\nDid you mean one of: list, status, download, help?", args[0])
 	}
 
 	// Primary action: synthesize text
@@ -70,6 +71,7 @@ func run() error {
 
 func cmdSpeak(args []string) error {
 	var voiceFlag string
+	var genderFilter string
 	speed := 1.0
 	output := "output.wav"
 	lang := "en-us"
@@ -83,6 +85,10 @@ func cmdSpeak(args []string) error {
 			if i < len(args) {
 				voiceFlag = args[i]
 			}
+		case "--male":
+			genderFilter = "male"
+		case "--female":
+			genderFilter = "female"
 		case "--speed":
 			i++
 			if i < len(args) {
@@ -118,16 +124,32 @@ func cmdSpeak(args []string) error {
 
 	model := registry.Get(modelID)
 	if model == nil {
-		return fmt.Errorf("unknown model %q\nRun 'cattery models' to see available models", modelID)
+		return fmt.Errorf("unknown model %q\nRun 'cattery list' to see available models", modelID)
 	}
 
-	if voiceFlag == "" {
-		voiceFlag = model.DefaultVoice
-	}
-	voiceInfo := model.GetVoice(voiceFlag)
-	if voiceInfo == nil {
-		return fmt.Errorf("unknown voice %q for %s\nRun 'cattery voices --model %s' to see available voices",
-			voiceFlag, model.Name, model.ID)
+	// Resolve voice: explicit flag > gender filter > random
+	var voiceInfo *registry.Voice
+	if voiceFlag != "" {
+		voiceInfo = model.GetVoice(voiceFlag)
+		if voiceInfo == nil {
+			return fmt.Errorf("unknown voice %q\nRun 'cattery list' to see available voices", voiceFlag)
+		}
+	} else {
+		candidates := model.Voices
+		if genderFilter != "" {
+			var filtered []registry.Voice
+			for _, v := range candidates {
+				if v.Gender == genderFilter {
+					filtered = append(filtered, v)
+				}
+			}
+			if len(filtered) == 0 {
+				return fmt.Errorf("no %s voices available", genderFilter)
+			}
+			candidates = filtered
+		}
+		pick := candidates[rand.Intn(len(candidates))]
+		voiceInfo = model.GetVoice(pick.ID)
 	}
 
 	if !phonemize.Available() {
@@ -186,8 +208,8 @@ func cmdSpeak(args []string) error {
 
 	duration := float64(len(samples)) / float64(model.SampleRate)
 	rtf := elapsed.Seconds() / duration
-	fmt.Fprintf(os.Stderr, "  %s (%s) → %s (%.1fs, %.2fx realtime)\n",
-		voiceInfo.Name, model.Name, output, duration, rtf)
+	fmt.Fprintf(os.Stderr, "%s | Used %s in %s, took %.1fs (RTF: %.2f)\n",
+		output, voiceInfo.Name, model.Name, duration, rtf)
 
 	return nil
 }
@@ -203,13 +225,9 @@ func cmdList() error {
 		if _, err := os.Stat(modelPath); err == nil {
 			marker = "✓"
 		}
-		def := ""
-		if model.ID == registry.Default {
-			def = " (default)"
-		}
-		fmt.Printf("%s %s  %s  %s%s\n", marker, model.Name, model.ID, formatSize(model.SizeBytes), def)
+		fmt.Printf("%s %s  %s\n", marker, model.Name, formatSize(model.SizeBytes))
 
-		for _, v := range model.Voices {
+		for i, v := range model.Voices {
 			vMarker := " "
 			vPath := paths.VoiceFile(dataDir, model.ID, v.ID)
 			if _, err := os.Stat(vPath); err == nil {
@@ -219,11 +237,7 @@ func cmdList() error {
 			if v.Gender == "male" {
 				gender = "♂"
 			}
-			vDef := ""
-			if v.ID == model.DefaultVoice {
-				vDef = " *"
-			}
-			fmt.Printf("  %s %s %-12s %s  %s%s\n", vMarker, gender, v.Name, v.ID, v.Description, vDef)
+			fmt.Printf("  %s %02d %s %-12s %s\n", vMarker, i+1, gender, v.Name, v.Description)
 		}
 		fmt.Println()
 	}
@@ -327,18 +341,7 @@ func cmdDownload(args []string) error {
 
 	dataDir := paths.DataDir()
 
-	// Download model + all voices (they're ~510KB each, no reason to be stingy)
-	for i := range model.Voices {
-		v := &model.Voices[i]
-		_, err := download.Ensure(dataDir, model, v)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  ✗ Voice %s: %v\n", v.Name, err)
-			continue
-		}
-	}
-
-	fmt.Fprintf(os.Stderr, "  ✓ %s ready (%d voices)\n", model.Name, len(model.Voices))
-	return nil
+	return download.EnsureAll(dataDir, model)
 }
 
 // --- help ---
@@ -347,9 +350,11 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `cattery — text-to-speech from the command line
 
 Usage:
-  cattery "Hello, world."                      Speak text to output.wav
-  cattery --voice bella "Hi there"             Use a specific voice
-  cattery --speed 1.5 -o out.wav "Fast talk"   Custom speed and output
+  cattery "Hello, world."                Speak text (random voice)
+  cattery --voice 3 "Hi there"           Use voice by number
+  cattery --voice bella "Hi there"       Use voice by name
+  cattery --female "Hi there"            Random female voice
+  cattery --speed 1.5 -o out.wav "Fast"  Custom speed and output
 
 Commands:
   list         List available models and voices
@@ -358,12 +363,13 @@ Commands:
   help         Show this help
 
 Flags:
-  --voice NAME     Voice name or ID (default: model-specific)
+  --voice NAME     Voice name, ID, or number (default: random)
+  --female           Pick a random female voice
+  --male             Pick a random male voice
   --speed FLOAT    Speech speed, 0.5-2.0 (default: 1.0)
   --output, -o     Output WAV file (default: output.wav)
   --lang LANG      Phonemizer language (default: en-us)
   --model ID       Model to use (default: kokoro-82m-v1.0)
-  --data DIR       Data directory (default: platform-specific)
 
 On first run, cattery downloads the model (~92MB) and runtime (~18MB).
 No accounts or API keys required.

@@ -3,7 +3,7 @@
 // Model and voice files are served from jikkuatwork/cattery-artefacts (Git LFS).
 // ORT runtime is served from Microsoft's official GitHub Releases.
 // All files are verified against SHA256 checksums.
-// Downloads are resumable and show progress bars.
+// Downloads show aligned progress bars.
 package download
 
 import (
@@ -38,7 +38,7 @@ type Result struct {
 }
 
 // Ensure checks if all required files exist, downloading any that are missing.
-// Runs pre-flight checks before downloading.
+// Used by cmdSpeak for a single voice.
 func Ensure(dataDir string, model *registry.Model, voice *registry.Voice) (*Result, error) {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return nil, err
@@ -51,46 +51,60 @@ func Ensure(dataDir string, model *registry.Model, voice *registry.Voice) (*Resu
 		ORTLib:    findOrtLib(paths.ORTLib(dataDir)),
 	}
 
-	// Calculate total bytes needed
-	var needed int64
-	if result.ORTLib == "" {
-		needed += 20_000_000 // ~18MB ORT + tar overhead
+	needORT := result.ORTLib == ""
+	needModel := !fileExists(result.ModelPath)
+	needVoice := !fileExists(result.VoicePath)
+
+	if !needORT && !needModel && !needVoice {
+		return result, nil
 	}
-	if !fileExists(result.ModelPath) {
+
+	// Pre-flight disk space check
+	var needed int64
+	if needORT {
+		needed += 20_000_000
+	}
+	if needModel {
 		needed += model.SizeBytes
 	}
-	if !fileExists(result.VoicePath) {
+	if needVoice {
 		needed += voice.SizeBytes
 	}
-
-	if needed > 0 {
-		if err := checkDiskSpace(dataDir, needed); err != nil {
-			return nil, err
-		}
+	if err := checkDiskSpace(dataDir, needed); err != nil {
+		return nil, err
 	}
 
-	// Download ORT runtime if missing
-	if result.ORTLib == "" {
-		lib, err := downloadORT(paths.ORTLib(dataDir))
+	// Compute label width for alignment
+	var labels []string
+	if needORT {
+		labels = append(labels, "Runtime")
+	}
+	if needModel {
+		labels = append(labels, model.Name)
+	}
+	if needVoice {
+		labels = append(labels, "Voice")
+	}
+	style := &barStyle{labelWidth: maxLen(labels)}
+
+	if needORT {
+		lib, err := downloadORT(paths.ORTLib(dataDir), style)
 		if err != nil {
 			return nil, fmt.Errorf("download ORT: %w", err)
 		}
 		result.ORTLib = lib
 	}
 
-	// Download model if missing
-	if !fileExists(result.ModelPath) {
+	if needModel {
 		url := fmt.Sprintf("%s/%s/%s", artefactsBaseURL, model.ID, model.Filename)
-		if err := downloadFileResumable(url, result.ModelPath, model.SizeBytes, model.SHA256, model.Name); err != nil {
+		if err := downloadWithBar(style, model.Name, url, result.ModelPath, model.SizeBytes, model.SHA256); err != nil {
 			return nil, fmt.Errorf("download model: %w", err)
 		}
 	}
 
-	// Download voice if missing
-	if !fileExists(result.VoicePath) {
+	if needVoice {
 		url := fmt.Sprintf("%s/%s/voices/%s.bin", artefactsBaseURL, model.ID, voice.ID)
-		label := fmt.Sprintf("Voice: %s", voice.Name)
-		if err := downloadFileResumable(url, result.VoicePath, voice.SizeBytes, voice.SHA256, label); err != nil {
+		if err := downloadWithBar(style, "Voice", url, result.VoicePath, voice.SizeBytes, voice.SHA256); err != nil {
 			return nil, fmt.Errorf("download voice %q: %w", voice.Name, err)
 		}
 	}
@@ -98,103 +112,165 @@ func Ensure(dataDir string, model *registry.Model, voice *registry.Voice) (*Resu
 	return result, nil
 }
 
-// checkDiskSpace verifies enough space is available.
-func checkDiskSpace(dir string, needed int64) error {
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(dir, &stat); err != nil {
-		return nil // can't check, proceed anyway
+// EnsureAll downloads ORT, the model, and all voices for a model.
+// Shows aligned progress bars: Runtime, Model (bytes), Voices (count).
+func EnsureAll(dataDir string, model *registry.Model) error {
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return err
 	}
-	avail := int64(stat.Bavail) * int64(stat.Bsize)
-	if avail < needed {
-		return fmt.Errorf("not enough disk space: need %s, have %s in %s",
-			formatBytes(needed), formatBytes(avail), dir)
+
+	needORT := findOrtLib(paths.ORTLib(dataDir)) == ""
+	needModel := !fileExists(paths.ModelFile(dataDir, model.ID, model.Filename))
+
+	// Count missing voices
+	type pending struct {
+		voice *registry.Voice
+		url   string
+		dest  string
 	}
+	var missing []pending
+	for i := range model.Voices {
+		v := &model.Voices[i]
+		dest := paths.VoiceFile(dataDir, model.ID, v.ID)
+		if !fileExists(dest) {
+			url := fmt.Sprintf("%s/%s/voices/%s.bin", artefactsBaseURL, model.ID, v.ID)
+			missing = append(missing, pending{voice: v, url: url, dest: dest})
+		}
+	}
+
+	if !needORT && !needModel && len(missing) == 0 {
+		return nil
+	}
+
+	// --- Runtime group ---
+	if needORT {
+		style := &barStyle{labelWidth: len("Runtime")}
+		if _, err := downloadORT(paths.ORTLib(dataDir), style); err != nil {
+			return fmt.Errorf("download ORT: %w", err)
+		}
+		fmt.Fprintln(os.Stderr)
+	}
+
+	// --- Model group ---
+	if needModel || len(missing) > 0 {
+		fmt.Fprintf(os.Stderr, "%s\n", model.Name)
+
+		// Compute label width for model sub-items
+		var labels []string
+		if needModel {
+			labels = append(labels, "Model")
+		}
+		if len(missing) > 0 {
+			labels = append(labels, "Voices")
+		}
+		style := &barStyle{labelWidth: maxLen(labels) + 1} // +1 for leading space
+
+		if needModel {
+			modelPath := paths.ModelFile(dataDir, model.ID, model.Filename)
+			url := fmt.Sprintf("%s/%s/%s", artefactsBaseURL, model.ID, model.Filename)
+			if err := downloadWithBar(style, " Model", url, modelPath, model.SizeBytes, model.SHA256); err != nil {
+				return fmt.Errorf("download model: %w", err)
+			}
+		}
+
+		if len(missing) > 0 {
+			b := newBar(" Voices", int64(len(missing)), false, style)
+			for i, m := range missing {
+				if err := downloadFile(m.url, m.dest, m.voice.SHA256); err != nil {
+					// skip failed voice, continue
+				}
+				b.set(int64(i + 1))
+			}
+			b.finish()
+		}
+
+		fmt.Fprintln(os.Stderr)
+	}
+
 	return nil
 }
 
-// downloadFileResumable downloads a file with resume support and progress bar.
-// If a .tmp partial file exists, it resumes from where it left off.
-func downloadFileResumable(url, destPath string, expectedSize int64, expectedSHA256, label string) error {
+// downloadWithBar downloads a file showing a byte-tracking progress bar.
+func downloadWithBar(style *barStyle, label, url, destPath string, expectedSize int64, expectedSHA256 string) error {
 	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 		return err
 	}
 
-	tmpPath := destPath + ".tmp"
-	var existingSize int64
-
-	// Check for partial download
-	if info, err := os.Stat(tmpPath); err == nil {
-		existingSize = info.Size()
-	}
-
-	// Build HTTP request with Range header for resume
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return err
-	}
-	if existingSize > 0 {
-		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingSize))
-	}
-
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.Get(url)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	switch resp.StatusCode {
-	case http.StatusOK:
-		// Full response — start from scratch
-		existingSize = 0
-	case http.StatusPartialContent:
-		// Resume supported
-	case http.StatusRequestedRangeNotSatisfiable:
-		// File already complete or server doesn't support range
-		existingSize = 0
-		resp.Body.Close()
-		req.Header.Del("Range")
-		resp, err = http.DefaultClient.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-	case http.StatusNotFound:
-		return fmt.Errorf("file not found (404): %s\nThe download URL may have changed. Try updating cattery.", url)
-	default:
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("not found (404): %s", url)
+	}
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
 	}
 
-	// Determine total size
-	totalSize := expectedSize
-	if totalSize == 0 && resp.ContentLength > 0 {
-		totalSize = resp.ContentLength + existingSize
+	total := expectedSize
+	if total == 0 && resp.ContentLength > 0 {
+		total = resp.ContentLength
 	}
 
-	// Open file for append or create
-	flags := os.O_CREATE | os.O_WRONLY
-	if existingSize > 0 {
-		flags |= os.O_APPEND
-	} else {
-		flags |= os.O_TRUNC
-	}
+	b := newBar(label, total, true, style)
 
-	f, err := os.OpenFile(tmpPath, flags, 0644)
+	tmpPath := destPath + ".tmp"
+	f, err := os.Create(tmpPath)
 	if err != nil {
 		return err
 	}
 
-	// Write with progress
-	pw := newProgressWriter(f, label, totalSize)
-	pw.written = existingSize // account for already-downloaded portion
-	_, copyErr := io.Copy(pw, resp.Body)
+	_, copyErr := io.Copy(io.MultiWriter(f, b), resp.Body)
 	f.Close()
-	pw.finish()
+	b.finish()
 
 	if copyErr != nil {
-		return fmt.Errorf("download interrupted: %w (partial file kept for resume)", copyErr)
+		os.Remove(tmpPath)
+		return fmt.Errorf("download interrupted: %w", copyErr)
 	}
 
-	// Verify checksum
+	if expectedSHA256 != "" {
+		if err := verifyChecksum(tmpPath, expectedSHA256); err != nil {
+			os.Remove(tmpPath)
+			return err
+		}
+	}
+
+	return os.Rename(tmpPath, destPath)
+}
+
+// downloadFile downloads a file silently (no progress bar).
+func downloadFile(url, destPath, expectedSHA256 string) error {
+	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		return err
+	}
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	tmpPath := destPath + ".tmp"
+	f, err := os.Create(tmpPath)
+	if err != nil {
+		return err
+	}
+
+	_, copyErr := io.Copy(f, resp.Body)
+	f.Close()
+
+	if copyErr != nil {
+		os.Remove(tmpPath)
+		return copyErr
+	}
+
 	if expectedSHA256 != "" {
 		if err := verifyChecksum(tmpPath, expectedSHA256); err != nil {
 			os.Remove(tmpPath)
@@ -206,7 +282,7 @@ func downloadFileResumable(url, destPath string, expectedSize int64, expectedSHA
 }
 
 // downloadORT downloads and extracts the ONNX Runtime shared library.
-func downloadORT(ortDir string) (string, error) {
+func downloadORT(ortDir string, style *barStyle) (string, error) {
 	if err := os.MkdirAll(ortDir, 0755); err != nil {
 		return "", err
 	}
@@ -242,15 +318,13 @@ func downloadORT(ortDir string) (string, error) {
 		return destPath, nil
 	}
 
-	// Download tarball to temp
+	// Download tarball to temp file
 	tmpFile, err := os.CreateTemp("", "cattery-ort-*.tgz")
 	if err != nil {
 		return "", err
 	}
 	defer os.Remove(tmpFile.Name())
 
-	fmt.Fprintf(os.Stderr, "Downloading ONNX Runtime %s (%s/%s)...\n", ortVersion, runtime.GOOS, arch)
-	pw := newProgressWriter(tmpFile, "ONNX Runtime", 20_000_000) // approximate
 	resp, err := http.Get(url)
 	if err != nil {
 		tmpFile.Close()
@@ -267,18 +341,20 @@ func downloadORT(ortDir string) (string, error) {
 		return "", fmt.Errorf("HTTP %d downloading ORT", resp.StatusCode)
 	}
 
+	total := int64(20_000_000)
 	if resp.ContentLength > 0 {
-		pw.total = resp.ContentLength
+		total = resp.ContentLength
 	}
 
-	_, err = io.Copy(pw, resp.Body)
+	b := newBar("Runtime", total, true, style)
+
+	_, err = io.Copy(io.MultiWriter(tmpFile, b), resp.Body)
 	tmpFile.Close()
-	pw.finish()
+	b.finish()
 	if err != nil {
 		return "", err
 	}
 
-	// Extract lib from tarball
 	if err := extractFromTarGz(tmpFile.Name(), "lib/"+libName, destPath); err != nil {
 		return "", fmt.Errorf("extract: %w", err)
 	}
@@ -345,6 +421,19 @@ func verifyChecksum(path, expected string) error {
 	return nil
 }
 
+func checkDiskSpace(dir string, needed int64) error {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(dir, &stat); err != nil {
+		return nil
+	}
+	avail := int64(stat.Bavail) * int64(stat.Bsize)
+	if avail < needed {
+		return fmt.Errorf("not enough disk space: need %s, have %s in %s",
+			formatBytes(needed), formatBytes(avail), dir)
+	}
+	return nil
+}
+
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
@@ -371,4 +460,14 @@ func findOrtLib(ortDir string) string {
 		}
 	}
 	return matches[0]
+}
+
+func maxLen(ss []string) int {
+	n := 0
+	for _, s := range ss {
+		if len(s) > n {
+			n = len(s)
+		}
+	}
+	return n
 }

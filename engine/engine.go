@@ -8,6 +8,7 @@ import (
 	"os"
 
 	ort "github.com/yalue/onnxruntime_go"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -44,8 +45,23 @@ type Engine struct {
 
 // Init initializes the ONNX Runtime environment with the given shared library.
 // Must be called once before creating an Engine.
+// Suppresses ORT's native stderr warnings (e.g. unknown CPU vendor).
 func Init(libPath string) error {
 	ort.SetSharedLibraryPath(libPath)
+
+	// Redirect stderr to /dev/null during ORT init to suppress C-level warnings.
+	stderrFd := int(os.Stderr.Fd())
+	origStderr, err := unix.Dup(stderrFd)
+	if err == nil {
+		devNull, err2 := os.Open(os.DevNull)
+		if err2 == nil {
+			unix.Dup2(int(devNull.Fd()), stderrFd)
+			devNull.Close()
+			defer unix.Dup2(origStderr, stderrFd)
+			defer unix.Close(origStderr)
+		}
+	}
+
 	return ort.InitializeEnvironment()
 }
 

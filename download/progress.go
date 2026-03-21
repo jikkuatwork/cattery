@@ -2,144 +2,120 @@ package download
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"sync"
 	"time"
-
-	"golang.org/x/term"
 )
 
-// ANSI color codes
-const (
-	colorReset  = "\033[0m"
-	colorDim    = "\033[2m"
-	colorGreen  = "\033[32m"
-	colorCyan   = "\033[36m"
-	colorWhite  = "\033[97m"
-	colorBGDim  = "\033[48;5;236m"
-	colorBGDone = "\033[48;5;22m"
-)
+const progressBarWidth = 40
 
-// progressWriter wraps an io.Writer and prints a progress bar to stderr.
-type progressWriter struct {
-	w          io.Writer
-	label      string
-	total      int64
-	written    int64
-	start      time.Time
-	mu         sync.Mutex
-	lastUpdate time.Time
+// barStyle holds shared layout settings so all bars align.
+type barStyle struct {
+	labelWidth int
 }
 
-func newProgressWriter(w io.Writer, label string, total int64) *progressWriter {
-	return &progressWriter{
-		w:     w,
-		label: label,
-		total: total,
-		start: time.Now(),
+// bar is a single progress bar line.
+type bar struct {
+	label   string
+	total   int64
+	current int64
+	isBytes bool
+	style   *barStyle
+	mu      sync.Mutex
+	last    time.Time
+	done    bool
+}
+
+func newBar(label string, total int64, isBytes bool, style *barStyle) *bar {
+	return &bar{
+		label:   label,
+		total:   total,
+		isBytes: isBytes,
+		style:   style,
 	}
 }
 
-func (pw *progressWriter) Write(p []byte) (int, error) {
-	n, err := pw.w.Write(p)
-	pw.mu.Lock()
-	pw.written += int64(n)
+// Write implements io.Writer so the bar can wrap download streams.
+func (b *bar) Write(p []byte) (int, error) {
+	n := len(p)
+	b.mu.Lock()
+	b.current += int64(n)
 	now := time.Now()
-	if now.Sub(pw.lastUpdate) > 80*time.Millisecond || pw.written == pw.total {
-		pw.render()
-		pw.lastUpdate = now
+	if now.Sub(b.last) > 80*time.Millisecond || b.current >= b.total {
+		b.render()
+		b.last = now
 	}
-	pw.mu.Unlock()
-	return n, err
+	b.mu.Unlock()
+	return n, nil
 }
 
-func (pw *progressWriter) render() {
-	width := termWidth()
+// set updates the current value (for count bars).
+func (b *bar) set(v int64) {
+	b.mu.Lock()
+	b.current = v
+	b.render()
+	b.mu.Unlock()
+}
 
-	elapsed := time.Since(pw.start).Seconds()
-	if elapsed < 0.001 {
-		elapsed = 0.001
+// finish marks the bar complete and prints a newline.
+func (b *bar) finish() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.done {
+		b.current = b.total
+		b.render()
+		fmt.Fprintln(os.Stderr)
+		b.done = true
 	}
+}
 
-	speed := float64(pw.written) / elapsed
-	done := pw.written == pw.total && pw.total > 0
+func (b *bar) render() {
+	// Label padded to shared width
+	label := fmt.Sprintf("%-*s", b.style.labelWidth, b.label)
 
-	var pct float64
-	if pw.total > 0 {
-		pct = float64(pw.written) / float64(pw.total) * 100
-	}
-
-	// Fixed-width formatting to prevent layout jumping
-	// "  Label           88.1 MB / 88.1 MB   12.3 MB/s  100%  [████████████████████]"
-	label := fmt.Sprintf("%-16s", truncate(pw.label, 16))
-	sizes := fmt.Sprintf("%8s / %-8s", formatBytes(pw.written), formatBytes(pw.total))
-	speedStr := fmt.Sprintf("%8s/s", formatBytes(int64(speed)))
-	pctStr := fmt.Sprintf("%3.0f%%", pct)
-
-	// Bar width: total width - fixed parts - padding
-	// label(16) + sizes(19) + speed(10) + pct(4) + bar borders(2) + spaces(6) = 57
-	barWidth := width - 57
-	if barWidth < 10 {
-		barWidth = 10
-	}
-
+	// Progress bar: [===>                  ]
 	filled := 0
-	if pw.total > 0 {
-		filled = int(float64(barWidth) * pct / 100)
+	if b.total > 0 {
+		filled = int(float64(progressBarWidth) * float64(b.current) / float64(b.total))
 	}
-	if filled > barWidth {
-		filled = barWidth
+	if filled > progressBarWidth {
+		filled = progressBarWidth
 	}
 
-	// Build colored bar
-	var bar string
-	if done {
-		bar = colorGreen + "["
-		for i := 0; i < barWidth; i++ {
-			bar += "█"
+	var barStr [progressBarWidth]byte
+	for i := range barStr {
+		if i < filled {
+			barStr[i] = '='
+		} else {
+			barStr[i] = ' '
 		}
-		bar += "]" + colorReset
+	}
+	if filled > 0 && filled < progressBarWidth {
+		barStr[filled-1] = '>'
+	}
+
+	green := "\033[32m"
+	reset := "\033[0m"
+
+	// Counters: right-aligned, fixed-width so layout never shifts
+	var counters string
+	if b.isBytes {
+		tot := fmtMB(b.total)
+		w := len(tot)
+		counters = fmt.Sprintf("%*s / %s", w, fmtMB(b.current), tot)
 	} else {
-		bar = colorDim + "[" + colorReset + colorCyan
-		for i := 0; i < filled; i++ {
-			bar += "█"
-		}
-		bar += colorDim
-		for i := filled; i < barWidth; i++ {
-			bar += "░"
-		}
-		bar += "]" + colorReset
+		tot := fmt.Sprintf("%d", b.total)
+		w := len(tot)
+		counters = fmt.Sprintf("%*d / %s", w, b.current, tot)
 	}
 
-	// Color the parts
-	labelColor := colorWhite
-	if done {
-		labelColor = colorGreen
-	}
-
-	fmt.Fprintf(os.Stderr, "\r%s%s%s  %s  %s  %s  %s",
-		labelColor, label, colorReset,
-		sizes, speedStr, pctStr, bar)
-
-	if done {
-		fmt.Fprintln(os.Stderr)
-	}
+	fmt.Fprintf(os.Stderr, "\r%s [%s%s%s] %s", label, green, string(barStr[:]), reset, counters)
 }
 
-func (pw *progressWriter) finish() {
-	pw.mu.Lock()
-	defer pw.mu.Unlock()
-	if pw.written < pw.total || pw.total == 0 {
-		fmt.Fprintln(os.Stderr)
-	}
-}
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max-1] + "…"
+// fmtMB formats bytes as "XXmb" with no decimal.
+func fmtMB(b int64) string {
+	mb := (b + 1<<19) >> 20 // round to nearest MB
+	return fmt.Sprintf("%dMB", mb)
 }
 
 func formatBytes(b int64) string {
@@ -153,12 +129,4 @@ func formatBytes(b int64) string {
 	default:
 		return fmt.Sprintf("%d B", b)
 	}
-}
-
-func termWidth() int {
-	w, _, err := term.GetSize(int(os.Stderr.Fd()))
-	if err != nil || w <= 0 {
-		return 80
-	}
-	return w
 }

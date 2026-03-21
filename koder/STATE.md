@@ -29,7 +29,7 @@ cattery/
 ├── audio/             # Pure Go WAV writer
 ├── download/          # Auto-download with progress bars, resume, SHA256
 ├── registry/          # Model/voice metadata registry
-├── paths/             # XDG-compliant data directory resolution
+├── paths/             # Data directory resolution (~/.cattery/)
 ├── scripts/           # Helper scripts
 └── koder/             # Project tracking
 ```
@@ -37,10 +37,13 @@ cattery/
 ## CLI Commands
 
 ```
-cattery "Hello, world."          # speak (auto-downloads on first run)
-cattery --voice bella "Hello"    # pick a voice by name or ID
+cattery "Hello, world."          # speak with random voice
+cattery --voice 3 "Hello"       # pick voice by number
+cattery --voice bella "Hello"    # pick voice by name
+cattery --female "Hello"         # random female voice
+cattery --male "Hello"           # random male voice
 cattery --speed 1.5 -o out.wav   # speed + output file
-cattery list                     # show models + voices
+cattery list                     # show models + voices (numbered)
 cattery status                   # platform, deps, disk usage
 cattery download                 # pre-fetch model + all voices
 ```
@@ -52,7 +55,7 @@ cattery download                 # pre-fetch model + all voices
 | Model + voices | `jikkuatwork/cattery-artefacts` (Git LFS) | 88MB + 13MB |
 | ORT runtime | Microsoft GitHub Releases | 18MB |
 
-All 27 voices now uploaded. Cached in `~/.local/share/cattery/` (XDG).
+All 27 voices now uploaded. Cached in `~/.cattery/`.
 
 ## Performance (aarch64 VM)
 
@@ -73,16 +76,12 @@ All 27 voices now uploaded. Cached in `~/.local/share/cattery/` (XDG).
 | [04](issues/04_cli.md) | CLI + model download | **done** | P1 |
 | [05](issues/05_cross_platform_build.md) | Cross-platform build | open | P2 |
 
-## What's Next (CLI polish)
+## What's Next
 
-These are the immediate next tasks for the CLI:
+All 6 CLI polish tasks completed. Remaining work:
 
-1. **Clean up progress bars** — show only `23MB / 120MB [========        ]`, no percentage or speed (bar is enough)
-2. **Numeric IDs for models/voices** — models get 01, 02...; voices get 01, 02...; much easier to type than slugs
-3. **Simplify model naming** — "Kokoro" not "Kokoro 82M" (user doesn't care about params)
-4. **Add --male / --female flag** — filter voices by gender
-5. **Random voice selection** — if no voice specified, pick a random one (instead of always defaulting to Heart)
-6. **Reduce noise** — strip unnecessary output, keep it minimal
+- Cross-platform build testing (issue #05)
+- Explore additional models when available
 
 ## Key Decisions Made
 
@@ -91,8 +90,10 @@ These are the immediate next tasks for the CLI:
 - **Separate artefacts repo**: `cattery-artefacts` holds binaries via Git LFS. No auth.
 - **ORT from Microsoft**: not mirrored — their GitHub Release URLs are permanent.
 - **espeak-ng via os/exec**: simplest phonemizer. WASM embed deferred.
-- **Per-model default voice**: each model carries its own default, no global constant.
+- **Random voice by default**: no voice flag = random pick; `--male`/`--female` to filter.
 - **All voices downloaded by `cattery download`**: they're ~510KB each, no reason to be stingy.
+- **~/.cattery/ for data**: simple, same on all platforms.
+- **ORT stderr suppressed**: redirect fd during init to hide C-level warnings.
 
 ## Research
 

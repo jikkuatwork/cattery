@@ -1,7 +1,11 @@
 // Package registry defines available models, voices, and their metadata.
 package registry
 
-import "strings"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // Model describes a TTS model available for download.
 type Model struct {
@@ -36,8 +40,8 @@ const Default = "kokoro-82m-v1.0"
 var Models = map[string]*Model{
 	"kokoro-82m-v1.0": {
 		ID:           "kokoro-82m-v1.0",
-		Name:         "Kokoro 82M",
-		Description:  "High-quality 82M parameter model, int8 quantized",
+		Name:         "Kokoro",
+		Description:  "High-quality int8 quantized model",
 		SizeBytes:    92_361_116,
 		Filename:     "model_quantized.onnx",
 		SHA256:       "fbae9257e1e05ffc727e951ef9b9c98418e6d79f1c9b6b13bd59f5c9028a1478",
@@ -86,9 +90,13 @@ func Get(id string) *Model {
 	return Models[id]
 }
 
-// GetVoice finds a voice by ID or short name (case-insensitive).
-// Matches: "af_heart", "heart", "Heart"
+// GetVoice finds a voice by numeric index (1-based), ID, or short name (case-insensitive).
+// Matches: "1", "01", "af_heart", "heart", "Heart"
 func (m *Model) GetVoice(name string) *Voice {
+	// Try numeric index first (1-based)
+	if n, err := strconv.Atoi(name); err == nil && n >= 1 && n <= len(m.Voices) {
+		return &m.Voices[n-1]
+	}
 	lower := strings.ToLower(name)
 	for i := range m.Voices {
 		if m.Voices[i].ID == lower || strings.ToLower(m.Voices[i].Name) == lower {
@@ -96,6 +104,16 @@ func (m *Model) GetVoice(name string) *Voice {
 		}
 	}
 	return nil
+}
+
+// VoiceNumber returns the 1-based index of a voice, formatted as "01", "02", etc.
+func (m *Model) VoiceNumber(v *Voice) string {
+	for i := range m.Voices {
+		if m.Voices[i].ID == v.ID {
+			return fmt.Sprintf("%02d", i+1)
+		}
+	}
+	return "??"
 }
 
 // ListModels returns all registered model IDs with their display names.
