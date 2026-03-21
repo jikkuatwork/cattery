@@ -20,8 +20,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/kodeman/cattery/paths"
-	"github.com/kodeman/cattery/registry"
+	"github.com/jikkuatwork/cattery/paths"
+	"github.com/jikkuatwork/cattery/registry"
 )
 
 const (

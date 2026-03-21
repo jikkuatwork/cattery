@@ -11,7 +11,7 @@ cattery "Hello, world."
 
 ## Stack
 
-- **Language**: Go (pure, no cgo)
+- **Language**: Go (cgo only for malloc_trim)
 - **Inference**: ONNX Runtime 1.24.1+ via `yalue/onnxruntime_go` v1.27.0 (dlopen)
 - **Model**: Kokoro-82M int8 quantized (92MB ONNX)
 - **Phonemization**: espeak-ng via `os/exec` (only system dep)
@@ -28,9 +28,11 @@ cattery/
 ├── phonemize/         # espeak-ng IPA phonemizer
 ├── audio/             # Pure Go WAV writer
 ├── download/          # Auto-download with progress bars, resume, SHA256
+├── server/            # REST API server with lazy engine pool
+├── preflight/         # System readiness checks (RAM, deps)
 ├── registry/          # Model/voice metadata registry
 ├── paths/             # Data directory resolution (~/.cattery/)
-├── scripts/           # Helper scripts
+├── scripts/           # Helper scripts, benchmarks
 └── koder/             # Project tracking
 ```
 
@@ -46,6 +48,10 @@ cattery --speed 1.5 -o out.wav   # speed + output file
 cattery list                     # show models + voices (numbered)
 cattery status                   # platform, deps, disk usage
 cattery download                 # pre-fetch model + all voices
+cattery serve                    # REST API on :7100 (lazy, 1 worker)
+cattery serve --port 8080 -w 2   # custom port + workers
+cattery serve --keep-alive       # pre-warm engines, never evict
+cattery serve --idle-timeout 60  # evict engines after 60s idle
 ```
 
 ## Downloads (no auth, stable URLs)
@@ -57,12 +63,16 @@ cattery download                 # pre-fetch model + all voices
 
 All 27 voices now uploaded. Cached in `~/.cattery/`.
 
-## Performance (aarch64 VM)
+## Performance (aarch64 VM, 6-core)
 
 | Metric | Value |
 |---|---|
 | RTF | 0.70x (faster than real-time) |
-| Peak RSS | 239MB (Go heap: 1MB) |
+| Idle RSS (lazy) | 8 MB (no engine loaded) |
+| Idle RSS (post-evict) | ~50 MB (after malloc_trim) |
+| Peak RSS (short text) | ~180 MB |
+| Peak RSS (long text) | ~360 MB |
+| Cold start | ~1.4s (ORT reload + model) |
 | Binary | 8.3MB |
 | First-run download | ~120MB total |
 
@@ -75,13 +85,23 @@ All 27 voices now uploaded. Cached in `~/.cattery/`.
 | [03](issues/03_wav_writer.md) | WAV writer | **done** | P1 |
 | [04](issues/04_cli.md) | CLI + model download | **done** | P1 |
 | [05](issues/05_cross_platform_build.md) | Cross-platform build | open | P2 |
+| [06](issues/06_rest_server.md) | REST API server | **done** | P1 |
+| [07](issues/07_license_audit.md) | License audit (model hosting, deps) | open | P1 |
+| [08](issues/08_stt_module.md) | Speech-to-text module | open | P2 |
+| [09](issues/09_pretty_help.md) | Pretty CLI help | open | P3 |
+| [10](issues/10_server_api_audit.md) | Server API audit for apps | open | P2 |
+| [11](issues/11_server_auth.md) | Optional server auth | open | P2 |
+| [12](issues/12_llm_proxy.md) | LLM proxy (Ollama/OpenRouter) | open | P2 |
+| [13](issues/13_local_4b_model.md) | Local 4B LLM via ONNX | open | P3 |
+| [14](issues/14_web_ui.md) | Embedded web UI | open | P3 |
 
 ## What's Next
 
-All 6 CLI polish tasks completed. Remaining work:
-
-- Cross-platform build testing (issue #05)
-- Explore additional models when available
+- License audit (#07) — P1, blocks distribution
+- Server API audit (#10) + auth (#11) — before apps consume it
+- STT module (#08) — completes audio pipeline
+- LLM proxy (#12) — unified AI backend
+- Vision: single-binary conversational system (STT → LLM → TTS) for indie builders
 
 ## Key Decisions Made
 
@@ -94,6 +114,11 @@ All 6 CLI polish tasks completed. Remaining work:
 - **All voices downloaded by `cattery download`**: they're ~510KB each, no reason to be stingy.
 - **~/.cattery/ for data**: simple, same on all platforms.
 - **ORT stderr suppressed**: redirect fd during init to hide C-level warnings.
+- **WAV bytes, not base64**: REST API streams raw WAV with Content-Type: audio/wav. 33% smaller than base64.
+- **Lazy engine pool**: engines created on first request, evicted after idle timeout. Full ORT dlclose + malloc_trim reclaims C heap.
+- **Shared char budget**: total characters across all queued requests bounded (default 500). Caps peak RSS regardless of request distribution.
+- **Preflight checks**: `preflight.Check()` verifies RAM, espeak-ng, model files before destabilizing the host.
+- **Module path**: `github.com/jikkuatwork/cattery` — matches repo URL for `go get`.
 
 ## Research
 

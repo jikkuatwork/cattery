@@ -19,12 +19,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kodeman/cattery/audio"
-	"github.com/kodeman/cattery/download"
-	"github.com/kodeman/cattery/engine"
-	"github.com/kodeman/cattery/paths"
-	"github.com/kodeman/cattery/phonemize"
-	"github.com/kodeman/cattery/registry"
+	"github.com/jikkuatwork/cattery/audio"
+	"github.com/jikkuatwork/cattery/download"
+	"github.com/jikkuatwork/cattery/engine"
+	"github.com/jikkuatwork/cattery/paths"
+	"github.com/jikkuatwork/cattery/phonemize"
+	"github.com/jikkuatwork/cattery/registry"
+	"github.com/jikkuatwork/cattery/server"
 )
 
 func main() {
@@ -44,6 +45,8 @@ func run() error {
 
 	// Subcommands (info/management only)
 	switch args[0] {
+	case "serve":
+		return cmdServe(args[1:])
 	case "list":
 		return cmdList()
 	case "status":
@@ -60,11 +63,70 @@ func run() error {
 
 	// Check for likely typos of subcommands before treating as text
 	if len(args) == 1 && !strings.HasPrefix(args[0], "--") && looksLikeCommand(args[0]) {
-		return fmt.Errorf("unknown command %q\nDid you mean one of: list, status, download, help?", args[0])
+		return fmt.Errorf("unknown command %q\nDid you mean one of: serve, list, status, download, help?", args[0])
 	}
 
 	// Primary action: synthesize text
 	return cmdSpeak(args)
+}
+
+// --- serve ---
+
+func cmdServe(args []string) error {
+	cfg := server.Config{
+		Port:    7100,
+		Workers: 1,
+		ModelID: registry.Default,
+	}
+	var idleSec int
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--port", "-p":
+			i++
+			if i < len(args) {
+				fmt.Sscanf(args[i], "%d", &cfg.Port)
+			}
+		case "--workers", "-w":
+			i++
+			if i < len(args) {
+				fmt.Sscanf(args[i], "%d", &cfg.Workers)
+			}
+		case "--max-chars":
+			i++
+			if i < len(args) {
+				fmt.Sscanf(args[i], "%d", &cfg.MaxChars)
+			}
+		case "--queue-max":
+			i++
+			if i < len(args) {
+				fmt.Sscanf(args[i], "%d", &cfg.QueueMax)
+			}
+		case "--idle-timeout":
+			i++
+			if i < len(args) {
+				fmt.Sscanf(args[i], "%d", &idleSec)
+				cfg.IdleTimeout = time.Duration(idleSec) * time.Second
+			}
+		case "--keep-alive":
+			cfg.KeepAlive = true
+		case "--model":
+			i++
+			if i < len(args) {
+				cfg.ModelID = args[i]
+			}
+		default:
+			return fmt.Errorf("unknown flag %q for serve\nUsage: cattery serve [--port 7100] [--workers 1]", args[i])
+		}
+	}
+
+	srv, err := server.New(cfg)
+	if err != nil {
+		return err
+	}
+	defer srv.Shutdown()
+
+	return srv.ListenAndServe()
 }
 
 // --- speak (primary action) ---
@@ -357,10 +419,18 @@ Usage:
   cattery --speed 1.5 -o out.wav "Fast"  Custom speed and output
 
 Commands:
+  serve        Start REST API server
   list         List available models and voices
   status       Show system status and downloaded files
   download     Pre-download model and voices
   help         Show this help
+
+Server:
+  cattery serve                        Start on :7100 (1 worker, lazy-loaded)
+  cattery serve --port 8080 -w 2       Custom port and workers
+  cattery serve --max-chars 300        Shared char budget (bounds RAM)
+  cattery serve --idle-timeout 600     Evict engines after N seconds idle
+  cattery serve --keep-alive           Pre-warm engines, never evict
 
 Flags:
   --voice NAME     Voice name, ID, or number (default: random)
@@ -384,7 +454,7 @@ func looksLikeCommand(s string) bool {
 		return false
 	}
 	// Known commands for fuzzy matching
-	commands := []string{"list", "status", "download", "help", "version"}
+	commands := []string{"serve", "list", "status", "download", "help", "version"}
 	lower := strings.ToLower(s)
 	for _, cmd := range commands {
 		if lower == cmd {

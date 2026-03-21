@@ -1,4 +1,4 @@
-module github.com/kodeman/cattery
+module github.com/jikkuatwork/cattery
 
 go 1.25.1
 

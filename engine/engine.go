@@ -1,11 +1,17 @@
 // Package engine wraps ONNX Runtime inference for Kokoro TTS.
 package engine
 
+/*
+#include <malloc.h>
+*/
+import "C"
+
 import (
 	"encoding/binary"
 	"fmt"
 	"math"
 	"os"
+	"runtime/debug"
 
 	ort "github.com/yalue/onnxruntime_go"
 	"golang.org/x/sys/unix"
@@ -44,9 +50,13 @@ type Engine struct {
 }
 
 // Init initializes the ONNX Runtime environment with the given shared library.
-// Must be called once before creating an Engine.
+// Can be called again after Shutdown to re-initialize (full dlopen/dlclose cycle).
 // Suppresses ORT's native stderr warnings (e.g. unknown CPU vendor).
 func Init(libPath string) error {
+	if ort.IsInitialized() {
+		return nil
+	}
+
 	ort.SetSharedLibraryPath(libPath)
 
 	// Redirect stderr to /dev/null during ORT init to suppress C-level warnings.
@@ -65,9 +75,22 @@ func Init(libPath string) error {
 	return ort.InitializeEnvironment()
 }
 
-// Shutdown destroys the ONNX Runtime environment.
+// Shutdown destroys the ONNX Runtime environment and unloads the shared library
+// via dlclose. Calls malloc_trim to return freed C heap pages to the OS.
+// Can be followed by Init to reload.
 func Shutdown() {
-	ort.DestroyEnvironment()
+	if ort.IsInitialized() {
+		ort.DestroyEnvironment()
+	}
+	// Force glibc to release free heap pages back to the OS.
+	C.malloc_trim(0)
+	// Also release Go's unused memory.
+	debug.FreeOSMemory()
+}
+
+// IsInitialized returns whether the ORT environment is loaded.
+func IsInitialized() bool {
+	return ort.IsInitialized()
 }
 
 // New creates a new Engine by loading the ONNX model.

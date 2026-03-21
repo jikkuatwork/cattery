@@ -18,8 +18,8 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/kodeman/cattery/audio"
-	"github.com/kodeman/cattery/phonemize"
+	"github.com/jikkuatwork/cattery/audio"
+	"github.com/jikkuatwork/cattery/phonemize"
 	ort "github.com/yalue/onnxruntime_go"
 )
 
