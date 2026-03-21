@@ -21,6 +21,8 @@ cattery "Hello, world."
 
 ```
 cattery/
+├── .codex/
+│   └── skills/       # Repo-local Codex workflow skills (`open`, `close`)
 ├── cmd/
 │   ├── cattery/       # CLI
 │   └── spike/         # Original spike (reference, has timing)
@@ -121,6 +123,7 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 - **Preflight package**: checks RAM, espeak-ng, model files, and ORT presence; current request handling uses the memory gate and status/CLI expose the rest.
 - **Module path**: `github.com/jikkuatwork/cattery` — matches repo URL for `go get`.
 - **License audit documented**: current third-party licensing and distribution obligations are recorded in `THIRD_PARTY_NOTICES.md`.
+- **Repo-local Codex workflow**: `.codex/skills/open` and `.codex/skills/close` are tracked in-repo, not globally. `open` should read `koder/STATE.md` first after restarts; `close` should sync `koder/STATE.md`, validate changed local skills, and commit a coherent session when explicitly invoked.
 
 ## Research
 

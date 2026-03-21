@@ -1,0 +1,4 @@
+interface:
+  display_name: "Open"
+  short_description: "Load repo state and open issues"
+  default_prompt: "Use $open to read koder/STATE.md first, recover restart context, check related issues, and summarize the current project state before we start."

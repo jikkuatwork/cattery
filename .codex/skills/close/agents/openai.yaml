@@ -1,0 +1,4 @@
+interface:
+  display_name: "Close"
+  short_description: "Wrap work cleanly with notes and handoff"
+  default_prompt: "Use $close to update repo state, commit a coherent session, leave the worktree clean, and produce a concise handoff."
