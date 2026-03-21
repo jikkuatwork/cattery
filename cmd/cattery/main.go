@@ -43,10 +43,8 @@ func run() error {
 
 	// Subcommands (info/management only)
 	switch args[0] {
-	case "voices":
-		return cmdVoices(args[1:])
-	case "models":
-		return cmdModels()
+	case "list":
+		return cmdList()
 	case "status":
 		return cmdStatus(args[1:])
 	case "download":
@@ -194,82 +192,42 @@ func cmdSpeak(args []string) error {
 	return nil
 }
 
-// --- models ---
+// --- list ---
 
-func cmdModels() error {
+func cmdList() error {
 	dataDir := paths.DataDir()
 
-	fmt.Println("Available models:")
-	fmt.Println()
 	for _, model := range registry.Models {
 		modelPath := paths.ModelFile(dataDir, model.ID, model.Filename)
-		marker := "  "
-		status := fmt.Sprintf("not downloaded (%s)", formatSize(model.SizeBytes))
-		if info, err := os.Stat(modelPath); err == nil {
-			marker = "✓ "
-			status = fmt.Sprintf("downloaded (%s)", formatSize(info.Size()))
+		marker := "✗"
+		if _, err := os.Stat(modelPath); err == nil {
+			marker = "✓"
 		}
-
 		def := ""
 		if model.ID == registry.Default {
 			def = " (default)"
 		}
-		fmt.Printf("  %s%-20s %s%s\n", marker, model.Name, model.ID, def)
-		fmt.Printf("    %s\n", model.Description)
-		fmt.Printf("    %d voices, %dkHz, %s\n", len(model.Voices), model.SampleRate/1000, status)
-		fmt.Println()
-	}
-	return nil
-}
+		fmt.Printf("%s %s  %s  %s%s\n", marker, model.Name, model.ID, formatSize(model.SizeBytes), def)
 
-// --- voices ---
-
-func cmdVoices(args []string) error {
-	modelID := registry.Default
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--model" && i+1 < len(args) {
-			modelID = args[i+1]
-			i++
-		}
-	}
-
-	model := registry.Get(modelID)
-	if model == nil {
-		return fmt.Errorf("unknown model %q\nRun 'cattery models' to see available models", modelID)
-	}
-
-	dataDir := paths.DataDir()
-
-	fmt.Printf("Voices for %s (%s):\n\n", model.Name, model.ID)
-
-	byAccent := model.VoicesByAccent()
-	accents := []string{"American", "British", "European", "Asian", "Other"}
-	for _, accent := range accents {
-		voices, ok := byAccent[accent]
-		if !ok {
-			continue
-		}
-		fmt.Printf("  %s:\n", accent)
-		for _, v := range voices {
-			marker := "  "
+		for _, v := range model.Voices {
+			vMarker := " "
 			vPath := paths.VoiceFile(dataDir, model.ID, v.ID)
 			if _, err := os.Stat(vPath); err == nil {
-				marker = "✓ "
+				vMarker = "✓"
 			}
 			gender := "♀"
 			if v.Gender == "male" {
 				gender = "♂"
 			}
-			def := ""
+			vDef := ""
 			if v.ID == model.DefaultVoice {
-				def = " (default)"
+				vDef = " *"
 			}
-			fmt.Printf("    %s%-12s %s %-12s %s%s\n", marker, v.Name, gender, v.ID, v.Description, def)
+			fmt.Printf("  %s %s %-12s %s  %s%s\n", vMarker, gender, v.Name, v.ID, v.Description, vDef)
 		}
 		fmt.Println()
 	}
 
-	fmt.Println("  Use --voice with name or ID: cattery --voice bella \"Hello\"")
 	return nil
 }
 
@@ -413,8 +371,7 @@ Usage:
   cattery --speed 1.5 -o out.wav "Fast talk"   Custom speed and output
 
 Commands:
-  voices       List available voices
-  models       List available models
+  list         List available models and voices
   status       Show system status and downloaded files
   download     Pre-download model and voices
   help         Show this help
@@ -439,7 +396,7 @@ func looksLikeCommand(s string) bool {
 		return false
 	}
 	// Known commands for fuzzy matching
-	commands := []string{"voices", "models", "status", "download", "help", "version"}
+	commands := []string{"list", "status", "download", "help", "version"}
 	lower := strings.ToLower(s)
 	for _, cmd := range commands {
 		if lower == cmd {
