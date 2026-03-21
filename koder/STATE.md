@@ -89,7 +89,7 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [05](issues/05_cross_platform_build.md) | Cross-platform build | open | P2 |
 | [06](issues/06_rest_server.md) | REST API server | **done** | P1 |
 | [07](issues/07_license_audit.md) | License audit (model hosting, deps) | open (audit + repo license done) | P1 |
-| [08](issues/08_stt_module.md) | Speech-to-text module | open | P2 |
+| [08](issues/08_stt_module.md) | Speech-to-text module | open (spike proven) | P1 |
 | [09](issues/09_pretty_help.md) | Pretty CLI help | open | P3 |
 | [10](issues/10_server_api_audit.md) | Server API audit for apps | open | P2 |
 | [11](issues/11_server_auth.md) | Optional server auth | open | P2 |
@@ -100,12 +100,14 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 
 ## What's Next
 
+- **STT module (#08)** — Moonshine-tiny spike proven (27MB, 28x real-time,
+  exact transcription). Next: wrap into `stt/` package, add to registry +
+  download, clarify weight license before distribution.
 - Implementation plans for `#07`, `#10`, and `#11` now live in
   `koder/plans/`.
 - License compliance follow-through (#07) — artefacts-repo notices +
   release-packaging follow-up remain. Repo code is now Apache-2.0.
 - Server API audit (#10) + auth (#11) — before apps consume it
-- STT module (#08) — completes audio pipeline
 - LLM proxy (#12) — unified AI backend
 - Vision: single-binary conversational system (STT → LLM → TTS) for indie builders
 
@@ -128,6 +130,7 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 - **Project license**: `cattery` code is Apache-2.0; packaged releases should
   carry `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`.
 - **License audit documented**: current third-party licensing and distribution obligations are recorded in `THIRD_PARTY_NOTICES.md`.
+- **STT model: Moonshine-tiny**: 27MB quantized ONNX, raw 16kHz PCM input (no mel spectrograms), 28x real-time on CPU, shares ORT instance with TTS. Community ONNX export from onnx-community/moonshine-tiny-ONNX. Weight license unclear — needs clarification before distribution.
 - **Repo-local Codex workflow**: `.codex/skills/open` and `.codex/skills/close` are tracked in-repo, not globally. `open` should read `koder/STATE.md` first after restarts; `close` should sync `koder/STATE.md`, validate changed local skills, and commit a coherent session when explicitly invoked.
 
 ## Research

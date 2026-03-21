@@ -1,4 +1,5 @@
 models-data/
 *.wav
 /spike
+/stt-spike
 /cattery
