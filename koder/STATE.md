@@ -96,6 +96,7 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [12](issues/12_llm_proxy.md) | LLM proxy (Ollama/OpenRouter) | open | P2 |
 | [13](issues/13_local_4b_model.md) | Local 4B LLM via ONNX | open | P3 |
 | [14](issues/14_web_ui.md) | Embedded web UI | open | P3 |
+| [15](issues/15_mirror_json.md) | Artefact mirror registry (mirror.json) | open | P2 |
 
 ## What's Next
 
