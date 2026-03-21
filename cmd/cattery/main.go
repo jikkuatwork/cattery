@@ -305,7 +305,6 @@ func cmdStatus(args []string) error {
 
 func cmdDownload(args []string) error {
 	modelID := registry.Default
-	allVoices := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -314,8 +313,6 @@ func cmdDownload(args []string) error {
 			if i < len(args) {
 				modelID = args[i]
 			}
-		case "--all-voices":
-			allVoices = true
 		default:
 			if !strings.HasPrefix(args[i], "--") {
 				modelID = args[i]
@@ -325,38 +322,22 @@ func cmdDownload(args []string) error {
 
 	model := registry.Get(modelID)
 	if model == nil {
-		return fmt.Errorf("unknown model %q\nRun 'cattery models' to see available models", modelID)
+		return fmt.Errorf("unknown model %q\nRun 'cattery list' to see available models", modelID)
 	}
 
 	dataDir := paths.DataDir()
 
-	defaultVoice := model.GetVoice(model.DefaultVoice)
-	if defaultVoice == nil && len(model.Voices) > 0 {
-		defaultVoice = &model.Voices[0]
-	}
-
-	_, err := download.Ensure(dataDir, model, defaultVoice)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(os.Stderr, "  ✓ %s model ready\n", model.Name)
-	fmt.Fprintf(os.Stderr, "  ✓ Voice: %s\n", defaultVoice.Name)
-
-	if allVoices {
-		for i := range model.Voices {
-			v := &model.Voices[i]
-			if v.ID == defaultVoice.ID {
-				continue
-			}
-			_, err := download.Ensure(dataDir, model, v)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "  ✗ Voice %s: %v\n", v.Name, err)
-				continue
-			}
-			fmt.Fprintf(os.Stderr, "  ✓ Voice: %s\n", v.Name)
+	// Download model + all voices (they're ~510KB each, no reason to be stingy)
+	for i := range model.Voices {
+		v := &model.Voices[i]
+		_, err := download.Ensure(dataDir, model, v)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  ✗ Voice %s: %v\n", v.Name, err)
+			continue
 		}
 	}
 
+	fmt.Fprintf(os.Stderr, "  ✓ %s ready (%d voices)\n", model.Name, len(model.Voices))
 	return nil
 }
 
@@ -382,6 +363,7 @@ Flags:
   --output, -o     Output WAV file (default: output.wav)
   --lang LANG      Phonemizer language (default: en-us)
   --model ID       Model to use (default: kokoro-82m-v1.0)
+  --data DIR       Data directory (default: platform-specific)
 
 On first run, cattery downloads the model (~92MB) and runtime (~18MB).
 No accounts or API keys required.
