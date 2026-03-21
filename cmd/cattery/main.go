@@ -12,21 +12,20 @@ package main
 
 import (
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
 	"time"
 
-	"github.com/jikkuatwork/cattery/audio"
 	"github.com/jikkuatwork/cattery/download"
-	"github.com/jikkuatwork/cattery/engine"
 	"github.com/jikkuatwork/cattery/ort"
 	"github.com/jikkuatwork/cattery/paths"
 	"github.com/jikkuatwork/cattery/phonemize"
 	"github.com/jikkuatwork/cattery/registry"
 	"github.com/jikkuatwork/cattery/server"
+	"github.com/jikkuatwork/cattery/speak"
+	"github.com/jikkuatwork/cattery/speak/kokoro"
 )
 
 func main() {
@@ -190,29 +189,12 @@ func cmdSpeak(args []string) error {
 		return fmt.Errorf("unknown model %q\nRun 'cattery list' to see available models", modelID)
 	}
 
-	// Resolve voice: explicit flag > gender filter > random
-	var voiceInfo *registry.Voice
-	if voiceFlag != "" {
-		voiceInfo = model.GetVoice(voiceFlag)
-		if voiceInfo == nil {
-			return fmt.Errorf("unknown voice %q\nRun 'cattery list' to see available voices", voiceFlag)
+	voiceInfo, err := kokoro.ResolveVoice(model, voiceFlag, genderFilter)
+	if err != nil {
+		if voiceFlag != "" {
+			return fmt.Errorf("%w\nRun 'cattery list' to see available voices", err)
 		}
-	} else {
-		candidates := model.Voices
-		if genderFilter != "" {
-			var filtered []registry.Voice
-			for _, v := range candidates {
-				if v.Gender == genderFilter {
-					filtered = append(filtered, v)
-				}
-			}
-			if len(filtered) == 0 {
-				return fmt.Errorf("no %s voices available", genderFilter)
-			}
-			candidates = filtered
-		}
-		pick := candidates[rand.Intn(len(candidates))]
-		voiceInfo = model.GetVoice(pick.ID)
+		return err
 	}
 
 	if !phonemize.Available() {
@@ -220,7 +202,7 @@ func cmdSpeak(args []string) error {
 	}
 
 	dataDir := paths.DataDir()
-	files, err := download.Ensure(dataDir, model, voiceInfo)
+	files, err := download.Ensure(dataDir, model, nil)
 	if err != nil {
 		return err
 	}
@@ -230,47 +212,38 @@ func cmdSpeak(args []string) error {
 	}
 	defer ort.Shutdown()
 
-	eng, err := engine.New(files.ModelPath)
+	eng, err := kokoro.New(files.ModelPath, dataDir)
 	if err != nil {
 		return fmt.Errorf("load model: %w", err)
 	}
 	defer eng.Close()
 
-	p := &phonemize.EspeakPhonemizer{Voice: lang}
-	phonemes, err := p.Phonemize(text)
-	if err != nil {
-		return fmt.Errorf("phonemize: %w", err)
-	}
-
-	tokens := engine.Tokenize(phonemes)
-	if len(tokens) == 0 {
-		return fmt.Errorf("no tokens produced — text may not contain speakable content")
-	}
-
-	style, err := engine.LoadVoice(files.VoicePath, len(tokens))
-	if err != nil {
-		return fmt.Errorf("load voice: %w", err)
-	}
-
 	t0 := time.Now()
-	samples, err := eng.Synthesize(tokens, style, float32(speed))
-	if err != nil {
-		return fmt.Errorf("synthesize: %w", err)
-	}
-	elapsed := time.Since(t0)
-
 	f, err := os.Create(output)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	if err := audio.WriteWAV(f, samples, model.SampleRate); err != nil {
-		return fmt.Errorf("write wav: %w", err)
+	if err := eng.Speak(f, text, speak.Options{
+		Voice: voiceInfo.ID,
+		Lang:  lang,
+		Speed: speed,
+	}); err != nil {
+		return err
+	}
+	elapsed := time.Since(t0)
+
+	info, err := f.Stat()
+	if err != nil {
+		return err
 	}
 
-	duration := float64(len(samples)) / float64(model.SampleRate)
-	rtf := elapsed.Seconds() / duration
+	duration := wavDurationFromSize(info.Size(), model.SampleRate)
+	rtf := 0.0
+	if duration > 0 {
+		rtf = elapsed.Seconds() / duration
+	}
 	fmt.Fprintf(os.Stderr, "%s | Used %s in %s, took %.1fs (RTF: %.2f)\n",
 		output, voiceInfo.Name, model.Name, duration, rtf)
 
@@ -290,7 +263,7 @@ func cmdList() error {
 		}
 		fmt.Printf("%s %s  %s\n", marker, model.Name, formatSize(model.SizeBytes))
 
-		for i, v := range model.Voices {
+		for i, v := range kokoro.Voices(model) {
 			vMarker := " "
 			vPath := paths.VoiceFile(dataDir, model.ID, v.ID)
 			if _, err := os.Stat(vPath); err == nil {
@@ -513,4 +486,12 @@ func dirSize(path string) int64 {
 		return nil
 	})
 	return total
+}
+
+func wavDurationFromSize(size int64, sampleRate int) float64 {
+	if size <= 44 || sampleRate <= 0 {
+		return 0
+	}
+	dataBytes := size - 44
+	return float64(dataBytes/2) / float64(sampleRate)
 }

@@ -7,6 +7,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,11 +21,11 @@ import (
 	"time"
 
 	"github.com/jikkuatwork/cattery/download"
-	"github.com/jikkuatwork/cattery/engine"
 	"github.com/jikkuatwork/cattery/ort"
 	"github.com/jikkuatwork/cattery/paths"
-	"github.com/jikkuatwork/cattery/phonemize"
 	"github.com/jikkuatwork/cattery/registry"
+	"github.com/jikkuatwork/cattery/speak"
+	"github.com/jikkuatwork/cattery/speak/kokoro"
 	ortgo "github.com/yalue/onnxruntime_go"
 )
 
@@ -75,8 +77,7 @@ func main() {
 	// Step 1: Ensure ORT + TTS model available
 	fmt.Println("\n--- Step 1: Ensure ORT + TTS available ---")
 	model := registry.Get("kokoro-82m-v1.0")
-	voice := model.GetVoice("af_heart")
-	res, err := download.Ensure(dataDir, model, voice)
+	res, err := download.Ensure(dataDir, model, nil)
 	if err != nil {
 		log.Fatal("download.Ensure: ", err)
 	}
@@ -140,7 +141,7 @@ func main() {
 	// Step 6: Generate test audio via TTS
 	fmt.Println("\n--- Step 6: Generate test audio via TTS ---")
 	testText := "The quick brown fox jumps over the lazy dog."
-	samples := generateTestAudio(res, testText)
+	samples := generateTestAudio(res, dataDir, testText)
 	fmt.Printf("Generated %d samples (%.2fs at %dHz)\n",
 		len(samples), float64(len(samples))/float64(ttsSampleRate), ttsSampleRate)
 
@@ -379,30 +380,61 @@ func decodeTokens(ids []int64) string {
 	return strings.TrimSpace(text)
 }
 
-func generateTestAudio(res *download.Result, text string) []float32 {
-	eng, err := engine.New(res.ModelPath)
+func generateTestAudio(res *download.Result, dataDir, text string) []float32 {
+	eng, err := kokoro.New(res.ModelPath, dataDir)
 	if err != nil {
-		log.Fatal("engine.New: ", err)
+		log.Fatal("kokoro.New: ", err)
 	}
 	defer eng.Close()
 
-	p := &phonemize.EspeakPhonemizer{Voice: "en-us"}
-	phonemes, err := p.Phonemize(text)
+	var buf bytes.Buffer
+	err = eng.Speak(&buf, text, speak.Options{
+		Voice: "af_heart",
+		Lang:  "en-us",
+	})
 	if err != nil {
-		log.Fatal("Phonemize: ", err)
+		log.Fatal("Speak: ", err)
 	}
 
-	tokens := engine.Tokenize(phonemes)
-	style, err := engine.LoadVoice(res.VoicePath, len(tokens))
+	samples, err := decodePCM16WAV(buf.Bytes())
 	if err != nil {
-		log.Fatal("LoadVoice: ", err)
-	}
-
-	samples, err := eng.Synthesize(tokens, style, 1.0)
-	if err != nil {
-		log.Fatal("Synthesize: ", err)
+		log.Fatal("decodePCM16WAV: ", err)
 	}
 	return samples
+}
+
+func decodePCM16WAV(data []byte) ([]float32, error) {
+	if len(data) < 44 {
+		return nil, fmt.Errorf("wav too small: %d bytes", len(data))
+	}
+	if string(data[0:4]) != "RIFF" || string(data[8:12]) != "WAVE" {
+		return nil, fmt.Errorf("invalid wav header")
+	}
+	if string(data[12:16]) != "fmt " || string(data[36:40]) != "data" {
+		return nil, fmt.Errorf("unsupported wav layout")
+	}
+	if binary.LittleEndian.Uint16(data[20:22]) != 1 {
+		return nil, fmt.Errorf("unsupported wav format")
+	}
+	if binary.LittleEndian.Uint16(data[22:24]) != 1 {
+		return nil, fmt.Errorf("expected mono wav")
+	}
+	if binary.LittleEndian.Uint16(data[34:36]) != 16 {
+		return nil, fmt.Errorf("expected 16-bit pcm")
+	}
+
+	dataSize := int(binary.LittleEndian.Uint32(data[40:44]))
+	if len(data) < 44+dataSize {
+		return nil, fmt.Errorf("truncated wav payload")
+	}
+
+	payload := data[44 : 44+dataSize]
+	samples := make([]float32, len(payload)/2)
+	for i := range samples {
+		raw := int16(binary.LittleEndian.Uint16(payload[i*2:]))
+		samples[i] = float32(raw) / 32767.0
+	}
+	return samples, nil
 }
 
 func resample(samples []float32, fromRate, toRate int) []float32 {

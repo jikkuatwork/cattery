@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand"
 	"net/http"
 	"net/http/pprof"
 	"strings"
@@ -20,14 +19,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jikkuatwork/cattery/audio"
 	"github.com/jikkuatwork/cattery/download"
-	"github.com/jikkuatwork/cattery/engine"
 	"github.com/jikkuatwork/cattery/ort"
 	"github.com/jikkuatwork/cattery/paths"
 	"github.com/jikkuatwork/cattery/phonemize"
 	"github.com/jikkuatwork/cattery/preflight"
 	"github.com/jikkuatwork/cattery/registry"
+	"github.com/jikkuatwork/cattery/speak"
+	"github.com/jikkuatwork/cattery/speak/kokoro"
 )
 
 // Config holds server configuration.
@@ -60,7 +59,7 @@ type Server struct {
 	failed    atomic.Int64
 
 	// Lazy engine pool — engines created on demand, evicted after idle timeout.
-	engines   chan *engine.Engine // idle engines ready to use
+	engines   chan speak.Engine // idle engines ready to use
 	poolMu    sync.Mutex
 	poolCount int // total engines created (idle + active)
 	idleTimer *time.Timer
@@ -139,15 +138,14 @@ func New(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("espeak-ng not found (required)")
 	}
 
-	// Download model + ORT (pick any voice just to get paths).
+	// Download model + ORT only. Voices are fetched lazily by Speak().
 	dataDir := paths.DataDir()
-	firstVoice := &model.Voices[0]
-	result, err := download.Ensure(dataDir, model, firstVoice)
+	result, err := download.Ensure(dataDir, model, nil)
 	if err != nil {
 		return nil, fmt.Errorf("download: %w", err)
 	}
 
-	engines := make(chan *engine.Engine, cfg.Workers)
+	engines := make(chan speak.Engine, cfg.Workers)
 
 	s := &Server{
 		cfg:       cfg,
@@ -167,7 +165,7 @@ func New(cfg Config) (*Server, error) {
 			return nil, fmt.Errorf("init ORT: %w", err)
 		}
 		for i := 0; i < cfg.Workers; i++ {
-			eng, err := engine.New(result.ModelPath)
+			eng, err := kokoro.New(result.ModelPath, dataDir)
 			if err != nil {
 				return nil, fmt.Errorf("create engine %d: %w", i, err)
 			}
@@ -243,11 +241,12 @@ func (s *Server) handleTTS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve voice.
-	voice, err := s.resolveVoice(req.Voice, req.Gender)
+	voice, err := kokoro.ResolveVoice(s.model, req.Voice, req.Gender)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	req.Voice = voice.ID
 
 	// Admission: check shared character budget, then queue slot.
 	textLen := len(strings.TrimSpace(req.Text))
@@ -321,9 +320,10 @@ func (s *Server) handleTTS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleVoices(w http.ResponseWriter, r *http.Request) {
-	voices := make([]voiceResponse, len(s.model.Voices))
-	for i, v := range s.model.Voices {
-		voices[i] = voiceResponse{
+	voices := kokoro.Voices(s.model)
+	resp := make([]voiceResponse, len(voices))
+	for i, v := range voices {
+		resp[i] = voiceResponse{
 			ID:          i + 1,
 			Key:         v.ID,
 			Name:        v.Name,
@@ -332,7 +332,7 @@ func (s *Server) handleVoices(w http.ResponseWriter, r *http.Request) {
 			Description: v.Description,
 		}
 	}
-	writeJSON(w, http.StatusOK, voices)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -364,7 +364,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 // borrowEngine returns an engine, creating one on demand if needed.
 // Re-initializes ORT if it was fully shut down after idle eviction.
 // The caller MUST call returnEngine when done.
-func (s *Server) borrowEngine() (*engine.Engine, error) {
+func (s *Server) borrowEngine() (speak.Engine, error) {
 	s.poolMu.Lock()
 
 	// Stop idle timer — we're active.
@@ -394,7 +394,7 @@ func (s *Server) borrowEngine() (*engine.Engine, error) {
 			return nil, fmt.Errorf("re-init ORT: %w", err)
 		}
 
-		eng, err := engine.New(s.modelPath)
+		eng, err := kokoro.New(s.modelPath, s.dataDir)
 		if err != nil {
 			s.poolMu.Lock()
 			s.poolCount--
@@ -412,7 +412,7 @@ func (s *Server) borrowEngine() (*engine.Engine, error) {
 }
 
 // returnEngine puts an engine back into the pool and resets the idle timer.
-func (s *Server) returnEngine(eng *engine.Engine) {
+func (s *Server) returnEngine(eng speak.Engine) {
 	s.engines <- eng
 
 	if s.cfg.KeepAlive {
@@ -436,7 +436,9 @@ func (s *Server) evictEngines() {
 	for {
 		select {
 		case eng := <-s.engines:
-			eng.Close()
+			if err := eng.Close(); err != nil {
+				log.Printf("close engine: %v", err)
+			}
 			s.poolCount--
 			closed++
 		default:
@@ -462,31 +464,7 @@ type synthMeta struct {
 	rtf      float64
 }
 
-func (s *Server) synthesize(req TTSRequest, voice *registry.Voice) (*bytes.Buffer, *synthMeta, error) {
-	// Ensure voice file is downloaded.
-	voicePath := paths.VoiceFile(s.dataDir, s.model.ID, voice.ID)
-	// Lazy-download voice if missing (thread-safe via download pkg).
-	if _, err := download.Ensure(s.dataDir, s.model, voice); err != nil {
-		return nil, nil, fmt.Errorf("download voice: %w", err)
-	}
-
-	// Phonemize.
-	p := &phonemize.EspeakPhonemizer{Voice: req.Lang}
-	phonemes, err := p.Phonemize(req.Text)
-	if err != nil {
-		return nil, nil, fmt.Errorf("phonemize: %w", err)
-	}
-
-	tokens := engine.Tokenize(phonemes)
-	if len(tokens) == 0 {
-		return nil, nil, fmt.Errorf("no speakable content in text")
-	}
-
-	style, err := engine.LoadVoice(voicePath, len(tokens))
-	if err != nil {
-		return nil, nil, fmt.Errorf("load voice: %w", err)
-	}
-
+func (s *Server) synthesize(req TTSRequest, voice speak.Voice) (*bytes.Buffer, *synthMeta, error) {
 	// Borrow engine from pool (lazy-loaded, evicted on idle).
 	eng, err := s.borrowEngine()
 	if err != nil {
@@ -495,56 +473,28 @@ func (s *Server) synthesize(req TTSRequest, voice *registry.Voice) (*bytes.Buffe
 	defer s.returnEngine(eng)
 
 	t0 := time.Now()
-	samples, err := eng.Synthesize(tokens, style, float32(req.Speed))
+	var buf bytes.Buffer
+	err = eng.Speak(&buf, req.Text, speak.Options{
+		Voice:  voice.ID,
+		Gender: req.Gender,
+		Speed:  req.Speed,
+		Lang:   req.Lang,
+	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("synthesize: %w", err)
 	}
 	elapsed := time.Since(t0).Seconds()
 
-	// Encode WAV.
-	var buf bytes.Buffer
-	if err := audio.WriteWAV(&buf, samples, s.model.SampleRate); err != nil {
-		return nil, nil, fmt.Errorf("encode wav: %w", err)
+	duration := wavDurationFromSize(int64(buf.Len()), s.model.SampleRate)
+	rtf := 0.0
+	if duration > 0 {
+		rtf = elapsed / duration
 	}
-
-	duration := float64(len(samples)) / float64(s.model.SampleRate)
 	return &buf, &synthMeta{
 		duration: duration,
 		elapsed:  elapsed,
-		rtf:      elapsed / duration,
+		rtf:      rtf,
 	}, nil
-}
-
-// --- voice resolution ---
-
-func (s *Server) resolveVoice(voiceFlag, genderFilter string) (*registry.Voice, error) {
-	if voiceFlag != "" {
-		v := s.model.GetVoice(voiceFlag)
-		if v == nil {
-			return nil, fmt.Errorf("unknown voice %q", voiceFlag)
-		}
-		return v, nil
-	}
-
-	candidates := s.model.Voices
-	if genderFilter != "" {
-		if genderFilter != "male" && genderFilter != "female" {
-			return nil, fmt.Errorf("gender must be \"male\" or \"female\"")
-		}
-		var filtered []registry.Voice
-		for _, v := range candidates {
-			if v.Gender == genderFilter {
-				filtered = append(filtered, v)
-			}
-		}
-		if len(filtered) == 0 {
-			return nil, fmt.Errorf("no %s voices available", genderFilter)
-		}
-		candidates = filtered
-	}
-
-	pick := candidates[rand.Intn(len(candidates))]
-	return s.model.GetVoice(pick.ID), nil
 }
 
 // --- JSON helpers ---
@@ -557,4 +507,12 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, errorResponse{Error: msg})
+}
+
+func wavDurationFromSize(size int64, sampleRate int) float64 {
+	if size <= 44 || sampleRate <= 0 {
+		return 0
+	}
+	dataBytes := size - 44
+	return float64(dataBytes/2) / float64(sampleRate)
 }

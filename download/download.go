@@ -30,6 +30,7 @@ const (
 )
 
 // Result holds the paths to all required files after Ensure completes.
+// VoicePath is empty when no voice was requested.
 type Result struct {
 	ModelPath string
 	VoicePath string
@@ -38,7 +39,7 @@ type Result struct {
 }
 
 // Ensure checks if all required files exist, downloading any that are missing.
-// Used by cmdSpeak for a single voice.
+// If voice is nil, it ensures only the model and ORT runtime.
 func Ensure(dataDir string, model *registry.Model, voice *registry.Voice) (*Result, error) {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return nil, err
@@ -47,13 +48,15 @@ func Ensure(dataDir string, model *registry.Model, voice *registry.Voice) (*Resu
 	result := &Result{
 		DataDir:   dataDir,
 		ModelPath: paths.ModelFile(dataDir, model.ID, model.Filename),
-		VoicePath: paths.VoiceFile(dataDir, model.ID, voice.ID),
 		ORTLib:    findOrtLib(paths.ORTLib(dataDir)),
+	}
+	if voice != nil {
+		result.VoicePath = paths.VoiceFile(dataDir, model.ID, voice.ID)
 	}
 
 	needORT := result.ORTLib == ""
 	needModel := !fileExists(result.ModelPath)
-	needVoice := !fileExists(result.VoicePath)
+	needVoice := voice != nil && !fileExists(result.VoicePath)
 
 	if !needORT && !needModel && !needVoice {
 		return result, nil
