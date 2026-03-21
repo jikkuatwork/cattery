@@ -1,4 +1,4 @@
-// Package audio provides a minimal WAV file writer.
+// Package audio provides PCM audio helpers.
 package audio
 
 import (
