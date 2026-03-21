@@ -51,7 +51,8 @@ cattery list                     # show models + voices (numbered)
 cattery status                   # platform, deps, disk usage
 cattery download                 # pre-fetch model + all voices
 cattery serve                    # REST API on :7100 (lazy, 1 worker)
-cattery serve --port 8080 -w 2   # custom port + workers
+cattery serve --port 8080 -w 2   # custom speak workers
+cattery serve --listen-workers 2 # custom STT workers
 cattery serve --keep-alive       # pre-warm engines, never evict
 cattery serve --idle-timeout 60  # evict engines after 60s idle
 ```
@@ -102,7 +103,7 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [18](issues/18_registry_redesign.md) | Registry redesign for multi-modal artefacts | open | P1 |
 | [19](issues/19_cli_redesign.md) | CLI redesign: subcommand-per-modality | open | P1 |
 | [20](issues/20_stt_package.md) | STT package: Moonshine-tiny | open | P1 |
-| [21](issues/21_server_api_redesign.md) | Server API redesign for multi-modality | open | P2 |
+| [21](issues/21_server_api_redesign.md) | Server API redesign for multi-modality | **done** | P2 |
 | [22](issues/22_bundle_espeak.md) | Bundle espeak-ng (zero system deps) | open | P1 |
 | [23](issues/23_openai_remote_engines.md) | OpenAI-compatible remote engines | open | P2 |
 
@@ -136,7 +137,7 @@ Flow: `codex implements → verify build → commit on main → next issue`.
 | 3 | **#18** Registry redesign — multi-kind models | blocked on #16 |
 | 4 | **#20** STT package — `listen/` + `listen/moonshine/` | blocked on #18 |
 | 5 | **#19** CLI redesign — subcommand-per-modality | blocked on #17, #20 |
-| 6 | **#21** Server API — per-modality pools | blocked on #17, #18 |
+| 6 | **#21** Server API — per-modality pools | **done** |
 
 ### Also open
 

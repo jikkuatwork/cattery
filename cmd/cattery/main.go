@@ -81,8 +81,9 @@ func run() error {
 
 func cmdServe(args []string) error {
 	cfg := server.Config{
-		Port:    7100,
-		Workers: 1,
+		Port:          7100,
+		SpeakWorkers:  1,
+		ListenWorkers: 1,
 	}
 	var idleSec int
 
@@ -93,10 +94,15 @@ func cmdServe(args []string) error {
 			if i < len(args) {
 				fmt.Sscanf(args[i], "%d", &cfg.Port)
 			}
-		case "--workers", "-w":
+		case "--workers", "--speak-workers", "-w":
 			i++
 			if i < len(args) {
-				fmt.Sscanf(args[i], "%d", &cfg.Workers)
+				fmt.Sscanf(args[i], "%d", &cfg.SpeakWorkers)
+			}
+		case "--listen-workers":
+			i++
+			if i < len(args) {
+				fmt.Sscanf(args[i], "%d", &cfg.ListenWorkers)
 			}
 		case "--max-chars":
 			i++
@@ -116,13 +122,29 @@ func cmdServe(args []string) error {
 			}
 		case "--keep-alive":
 			cfg.KeepAlive = true
-		case "--model":
+		case "--model", "--speak-model":
 			i++
 			if i < len(args) {
-				cfg.ModelID = args[i]
+				index, err := resolveServeModelIndex(registry.KindTTS, args[i])
+				if err != nil {
+					return err
+				}
+				cfg.SpeakModel = index
+			}
+		case "--listen-model":
+			i++
+			if i < len(args) {
+				index, err := resolveServeModelIndex(registry.KindSTT, args[i])
+				if err != nil {
+					return err
+				}
+				cfg.ListenModel = index
 			}
 		default:
-			return fmt.Errorf("unknown flag %q for serve\nUsage: cattery serve [--port 7100] [--workers 1]", args[i])
+			return fmt.Errorf(
+				"unknown flag %q for serve\nUsage: cattery serve [--port 7100] [--speak-workers 1] [--listen-workers 1]",
+				args[i],
+			)
 		}
 	}
 
@@ -515,8 +537,11 @@ Pipes:
   echo "Hello" | cattery speak | cattery listen
 
 Server:
-  cattery serve                        Start on :7100 (1 worker, lazy-loaded)
-  cattery serve --port 8080 -w 2       Custom port and workers
+  cattery serve                        Start on :7100 (lazy-loaded pools)
+  cattery serve --port 8080 -w 2       Custom speak workers
+  cattery serve --listen-workers 2     Custom listen workers
+  cattery serve --speak-model 1        Default TTS model
+  cattery serve --listen-model 1       Default STT model
   cattery serve --max-chars 300        Shared char budget (bounds RAM)
   cattery serve --idle-timeout 600     Evict engines after N seconds idle
   cattery serve --keep-alive           Pre-warm engines, never evict
@@ -837,6 +862,14 @@ func kindTitle(kind registry.Kind) string {
 
 func commandNames() []string {
 	return []string{"speak", "listen", "serve", "list", "status", "download", "help", "version"}
+}
+
+func resolveServeModelIndex(kind registry.Kind, ref string) (int, error) {
+	model := registry.Resolve(kind, ref)
+	if model == nil {
+		return 0, fmt.Errorf("unknown %s model %q", strings.ToUpper(string(kind)), ref)
+	}
+	return model.Index, nil
 }
 
 func parseIndex(ref string) (int, bool) {

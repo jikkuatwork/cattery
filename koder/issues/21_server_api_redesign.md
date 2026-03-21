@@ -1,6 +1,6 @@
 # 21 — Server API redesign for multi-modality
 
-## Status: open
+## Status: done
 ## Priority: P2
 ## Depends on: #17 (TTS interface), #20 (STT package)
 ## Blocks: nothing
@@ -241,19 +241,19 @@ type Config struct {
 
 ## Acceptance criteria
 
-- [ ] `POST /v1/speak` accepts `"voice": 4` (numeric index)
-- [ ] `POST /v1/speak` accepts `"voice": "bella"` (name fallback)
-- [ ] Response headers include both index and slug for model + voice
-- [ ] `POST /v1/listen` transcribes WAV audio, response includes index + slug
-- [ ] `GET /v1/models` returns indexed model list with kind, location, download status
-- [ ] `GET /v1/voices` returns indexed voice list with model reference
-- [ ] `GET /v1/status` shows per-modality pool stats with index + slug
-- [ ] Remote models only appear when `OPENAI_API_KEY` is set
-- [ ] `POST /v1/tts` still works as alias (backwards compat)
-- [ ] TTS and STT pools are independently sized
-- [ ] Idle eviction works correctly with both pools
-- [ ] `go build ./...` and `go vet ./...` pass
-- [ ] Server handles concurrent TTS + STT requests
+- [x] `POST /v1/speak` accepts `"voice": 4` (numeric index)
+- [x] `POST /v1/speak` accepts `"voice": "bella"` (name fallback)
+- [x] Response headers include both index and slug for model + voice
+- [x] `POST /v1/listen` transcribes WAV audio, response includes index + slug
+- [x] `GET /v1/models` returns indexed model list with kind, location, download status
+- [x] `GET /v1/voices` returns indexed voice list with model reference
+- [x] `GET /v1/status` shows per-modality pool stats with index + slug
+- [x] Remote models only appear when `OPENAI_API_KEY` is set
+- [x] `POST /v1/tts` still works as alias (backwards compat)
+- [x] TTS and STT pools are independently sized
+- [x] Idle eviction works correctly with both pools
+- [x] `go build ./...` and `go vet ./...` pass
+- [x] Server handles concurrent TTS + STT requests
 
 ## Notes
 
