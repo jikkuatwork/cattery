@@ -1,11 +1,10 @@
-// cattery — text-to-speech from the command line.
+// cattery - speech tools from the command line.
 //
 // Usage:
 //
 //	cattery "Hello, world."
-//	cattery --voice bella --speed 1.2 -o greeting.wav "Hello!"
-//	cattery voices
-//	cattery models
+//	cattery speak --voice 4 "Hello!"
+//	cattery listen audio.wav
 //	cattery status
 //	cattery download
 package main
@@ -45,10 +44,14 @@ func run() error {
 
 	// Subcommands (info/management only)
 	switch args[0] {
+	case "speak":
+		return cmdSpeak(args[1:])
+	case "listen":
+		return cmdListen(args[1:])
 	case "serve":
 		return cmdServe(args[1:])
 	case "list":
-		return cmdList()
+		return cmdList(args[1:])
 	case "status":
 		return cmdStatus(args[1:])
 	case "download":
@@ -63,10 +66,14 @@ func run() error {
 
 	// Check for likely typos of subcommands before treating as text
 	if len(args) == 1 && !strings.HasPrefix(args[0], "--") && looksLikeCommand(args[0]) {
-		return fmt.Errorf("unknown command %q\nDid you mean one of: serve, list, status, download, help?", args[0])
+		return fmt.Errorf(
+			"unknown command %q\nDid you mean one of: %s?",
+			args[0],
+			strings.Join(commandNames(), ", "),
+		)
 	}
 
-	// Primary action: synthesize text
+	// Primary action: bare text is a shortcut for speak.
 	return cmdSpeak(args)
 }
 
@@ -134,7 +141,7 @@ func cmdSpeak(args []string) error {
 	var voiceFlag string
 	var genderFilter string
 	speed := 1.0
-	output := "output.wav"
+	var outputPath string
 	lang := "en-us"
 	var modelRef string
 	var textParts []string
@@ -158,7 +165,7 @@ func cmdSpeak(args []string) error {
 		case "--output", "-o":
 			i++
 			if i < len(args) {
-				output = args[i]
+				outputPath = args[i]
 			}
 		case "--lang":
 			i++
@@ -178,20 +185,23 @@ func cmdSpeak(args []string) error {
 		}
 	}
 
-	text := strings.Join(textParts, " ")
-	if text == "" {
-		return fmt.Errorf("no text provided\nUsage: cattery \"Hello, world.\"")
+	text, err := resolveSpeakText(textParts)
+	if err != nil {
+		return err
 	}
 
 	model := resolveTTSModel(modelRef)
 	if model == nil {
-		return fmt.Errorf("unknown TTS model %q\nRun 'cattery list' to see available models", modelRef)
+		return fmt.Errorf("unknown TTS model %q\nRun 'cattery list speak' to see available models", modelRef)
+	}
+	if model.Location != registry.Local {
+		return fmt.Errorf("remote TTS model %q is not supported yet", model.ID)
 	}
 
 	voiceInfo, err := kokoro.ResolveVoice(model, voiceFlag, genderFilter)
 	if err != nil {
 		if voiceFlag != "" {
-			return fmt.Errorf("%w\nRun 'cattery list' to see available voices", err)
+			return fmt.Errorf("%w\nRun 'cattery list speak' to see available voices", err)
 		}
 		return err
 	}
@@ -222,14 +232,16 @@ func cmdSpeak(args []string) error {
 	}
 	defer eng.Close()
 
-	t0 := time.Now()
-	f, err := os.Create(output)
+	output, err := openSpeakOutput(outputPath)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer output.Close()
 
-	if err := eng.Speak(f, text, speak.Options{
+	counted := &countingWriter{writer: output.writer}
+
+	t0 := time.Now()
+	if err := eng.Speak(counted, text, speak.Options{
 		Voice: voiceInfo.ID,
 		Lang:  lang,
 		Speed: speed,
@@ -238,88 +250,102 @@ func cmdSpeak(args []string) error {
 	}
 	elapsed := time.Since(t0)
 
-	info, err := f.Stat()
-	if err != nil {
-		return err
-	}
-
-	duration := wavDurationFromSize(info.Size(), model.MetaInt("sample_rate", 24000))
+	duration := wavDurationFromSize(counted.count, model.MetaInt("sample_rate", 24000))
 	rtf := 0.0
 	if duration > 0 {
 		rtf = elapsed.Seconds() / duration
 	}
 	fmt.Fprintf(os.Stderr, "%s | Used %s in %s, took %.1fs (RTF: %.2f)\n",
-		output, voiceInfo.Name, model.Name, duration, rtf)
+		output.name, voiceInfo.Name, model.Name, duration, rtf)
 
 	return nil
 }
 
 // --- list ---
 
-func cmdList() error {
-	dataDir := paths.DataDir()
+func cmdList(args []string) error {
+	kind, modelRef, err := parseSelectionArgs(args)
+	if err != nil {
+		return err
+	}
 
-	for _, kind := range displayKindOrder() {
-		models := localModelsByKind(kind)
-		if len(models) == 0 {
+	dataDir := paths.DataDir()
+	models, err := selectModels(kind, modelRef, false)
+	if err != nil {
+		return err
+	}
+
+	for _, groupKind := range orderedKindsFor(models, cliKindOrder()) {
+		group := modelsByKind(models, groupKind)
+		if len(group) == 0 {
 			continue
 		}
 
-		fmt.Printf("%s:\n", kindTitle(kind))
-		if kind == registry.KindRuntime {
+		fmt.Println(kindTitle(groupKind))
+		if groupKind == registry.KindRuntime {
 			ortLib := findORTStatus(dataDir)
-			for _, model := range models {
-				marker := "✗"
-				detail := "not downloaded"
-				if ortLib != "" {
+			for _, model := range group {
+				marker := " "
+				location := "local"
+				size := ""
+				if model.Location == registry.Remote {
+					marker = "☁"
+					location = "remote"
+				} else if ortLib != "" {
 					marker = "✓"
-					detail = ortLib
+					size = ortLib
 				}
-				fmt.Printf("  %s %02d %-18s %s\n", marker, model.Index, model.Name, detail)
+				fmt.Printf("  %02d  %-18s %12s  %-6s %s\n",
+					model.Index, model.Name, size, location, marker)
 			}
 			fmt.Println()
 			continue
 		}
 
-		for _, model := range models {
+		for _, model := range group {
+			if model.Location == registry.Remote {
+				fmt.Printf("  %02d  %-18s %12s  %-6s %s\n",
+					model.Index, model.Name, "", "remote", "☁")
+				if groupKind == registry.KindTTS && len(model.Voices) > 0 {
+					fmt.Println()
+					fmt.Printf("  Voices (%02d %s)\n", model.Index, model.Name)
+					for i := range model.Voices {
+						voice := model.Voices[i]
+						fmt.Printf("  %02d  %s  %-12s %s\n",
+							i+1, voiceSymbol(model, voice), voice.Name, strings.TrimSpace(voice.Description))
+					}
+					fmt.Println()
+				}
+				continue
+			}
+
 			status := inspectModel(dataDir, model)
-			marker := "✗"
-			if status.filesReady() {
+			marker := " "
+			if modelReady(model, status) {
 				marker = "✓"
 			}
 
-			fmt.Printf("  %s %02d %-18s %s\n",
-				marker, model.Index, model.Name, formatSize(status.totalFileBytes))
-			fmt.Printf("     files: %d / %d downloaded\n",
-				status.downloadedFiles, status.totalFiles)
+			fmt.Printf("  %02d  %-18s %12s  %-6s %s\n",
+				model.Index, model.Name, formatSize(status.totalFileBytes), "local", marker)
 
-			switch kind {
-			case registry.KindTTS:
-				for i := range model.Voices {
-					voice := model.Voices[i]
-					vMarker := " "
-					if _, err := os.Stat(paths.ArtefactFile(dataDir, model.ID, voice.File.Filename)); err == nil {
-						vMarker = "✓"
+			if groupKind == registry.KindTTS {
+				if len(model.Voices) > 0 {
+					fmt.Println()
+					fmt.Printf("  Voices (%02d %s)\n", model.Index, model.Name)
+					for i := range model.Voices {
+						voice := model.Voices[i]
+						fmt.Printf("  %02d  %s  %-12s %-24s %s\n",
+							i+1,
+							voiceSymbol(model, voice),
+							voice.Name,
+							strings.TrimSpace(voice.Description),
+							voiceReadyMarker(dataDir, model, voice),
+						)
 					}
-					gender := "♀"
-					if voice.Gender == "male" {
-						gender = "♂"
-					}
-					fmt.Printf("     %s %02d %s %-12s %s\n",
-						vMarker, i+1, gender, voice.Name, voice.Description)
-				}
-			case registry.KindSTT:
-				for _, file := range model.Files {
-					fMarker := " "
-					if _, err := os.Stat(paths.ArtefactFile(dataDir, model.ID, file.Filename)); err == nil {
-						fMarker = "✓"
-					}
-					fmt.Printf("     %s %-28s %s\n",
-						fMarker, filepath.Base(file.Filename), formatSize(file.SizeBytes))
+					fmt.Println()
 				}
 			}
 		}
-		fmt.Println()
 	}
 
 	return nil
@@ -328,13 +354,13 @@ func cmdList() error {
 // --- status ---
 
 func cmdStatus(args []string) error {
-	kind, modelRef, err := parseKindAndModel(args)
+	kind, modelRef, err := parseSelectionArgs(args)
 	if err != nil {
 		return err
 	}
 
 	dataDir := paths.DataDir()
-	models, err := selectLocalModels(kind, modelRef)
+	models, err := selectModels(kind, modelRef, false)
 	if err != nil {
 		return err
 	}
@@ -360,53 +386,57 @@ func cmdStatus(args []string) error {
 	}
 	fmt.Println()
 
-	for _, groupKind := range displayKindOrder() {
+	for _, groupKind := range orderedKindsFor(models, cliKindOrder()) {
 		group := modelsByKind(models, groupKind)
 		if len(group) == 0 {
 			continue
 		}
 
-		fmt.Printf("  %s:\n", kindTitle(groupKind))
+		fmt.Printf("  %s\n", kindTitle(groupKind))
 		if groupKind == registry.KindRuntime {
 			for _, model := range group {
-				marker := "✗"
+				marker := " "
 				detail := "not downloaded"
-				if ortLib != "" {
+				if model.Location == registry.Remote {
+					marker = "☁"
+					detail = "remote"
+				} else if ortLib != "" {
 					marker = "✓"
 					detail = ortLib
 				}
-				fmt.Printf("    %s %02d %-18s %s\n", marker, model.Index, model.Name, detail)
+				fmt.Printf("    %02d  %s  %-18s %s\n", model.Index, marker, model.Name, detail)
 			}
 			fmt.Println()
 			continue
 		}
 
 		for _, model := range group {
+			if model.Location == registry.Remote {
+				fmt.Printf("    %02d  ☁  %-18s remote\n", model.Index, model.Name)
+				continue
+			}
+
 			status := inspectModel(dataDir, model)
-			marker := "✗"
-			if status.filesReady() {
+			marker := " "
+			if modelReady(model, status) {
 				marker = "✓"
 			}
 
-			fmt.Printf("    %s %02d %-18s %s / %s\n",
-				marker,
+			fmt.Printf("    %02d  %s  %-18s %s",
 				model.Index,
+				marker,
 				model.Name,
-				formatSize(status.downloadedFileBytes),
 				formatSize(status.totalFileBytes),
 			)
-			fmt.Printf("      Files: %d / %d downloaded\n",
-				status.downloadedFiles, status.totalFiles)
 			if len(model.Voices) > 0 {
-				fmt.Printf("      Voices: %d / %d downloaded\n",
-					status.downloadedVoices, status.totalVoices)
+				fmt.Printf("   %d/%d voices", status.downloadedVoices, status.totalVoices)
 			}
+			fmt.Println()
 		}
 		fmt.Println()
 	}
 
-	totalSize := dirSize(dataDir)
-	fmt.Printf("  Disk usage:    %s\n", formatSize(totalSize))
+	fmt.Printf("  Disk:          %s\n", formatSize(dirSize(dataDir)))
 
 	return nil
 }
@@ -414,12 +444,12 @@ func cmdStatus(args []string) error {
 // --- download ---
 
 func cmdDownload(args []string) error {
-	kind, modelRef, err := parseKindAndModel(args)
+	kind, modelRef, err := parseSelectionArgs(args)
 	if err != nil {
 		return err
 	}
 
-	models, err := selectLocalModels(kind, modelRef)
+	models, err := selectModels(kind, modelRef, true)
 	if err != nil {
 		return err
 	}
@@ -442,21 +472,47 @@ func cmdDownload(args []string) error {
 // --- help ---
 
 func printUsage() {
-	fmt.Fprintf(os.Stderr, `cattery — text-to-speech from the command line
+	fmt.Fprintf(os.Stderr, `cattery - speech tools from the command line
 
 Usage:
-  cattery "Hello, world."                Speak text (random voice)
-  cattery --voice 3 "Hi there"           Use voice by number
-  cattery --voice bella "Hi there"       Use voice by name
-  cattery --female "Hi there"            Random female voice
-  cattery --speed 1.5 -o out.wav "Fast"  Custom speed and output
+  cattery "Hello, world."                Shortcut for cattery speak
+  cattery speak --voice 4 "Hi there"     Speak with voice index
+  cattery speak --model 1 "Hi there"     Speak with model index
+  cattery listen call.wav                Transcribe audio to stdout
+  cattery listen -                       Read audio from stdin
 
 Commands:
+  speak        Text to speech
+  listen       Speech to text
   serve        Start REST API server
-  list         List local TTS/STT/runtime registry entries
+  list         List speak/listen models and voices
   status       Show system status and downloaded artefacts
-  download     Pre-download local models, voices, and runtime
+  download     Pre-download local models and runtime
   help         Show this help
+
+Speak flags:
+  --voice REF      Voice number, name, or ID
+  --female         Pick a random female voice
+  --male           Pick a random male voice
+  --speed FLOAT    Speech speed, 0.5-2.0 (default: 1.0)
+  --output, -o     Output WAV file (default: output.wav or stdout if piped)
+  --lang LANG      Phonemizer language (default: en-us)
+  --model REF      TTS model index or ID (default: 1)
+
+Listen flags:
+  --lang LANG      Language hint
+  --output, -o     Output text file (default: stdout)
+  --model REF      STT model index or ID (default: 1)
+
+Manage:
+  cattery list
+  cattery list speak
+  cattery download listen
+  cattery status speak --model 1
+
+Pipes:
+  cattery listen call.wav | cattery speak
+  echo "Hello" | cattery speak | cattery listen
 
 Server:
   cattery serve                        Start on :7100 (1 worker, lazy-loaded)
@@ -464,21 +520,6 @@ Server:
   cattery serve --max-chars 300        Shared char budget (bounds RAM)
   cattery serve --idle-timeout 600     Evict engines after N seconds idle
   cattery serve --keep-alive           Pre-warm engines, never evict
-
-Flags:
-  --voice NAME     Voice name, ID, or number (default: random)
-  --female           Pick a random female voice
-  --male             Pick a random male voice
-  --speed FLOAT    Speech speed, 0.5-2.0 (default: 1.0)
-  --output, -o     Output WAV file (default: output.wav)
-  --lang LANG      Phonemizer language (default: en-us)
-  --model REF      TTS model ID or index (default: 1)
-
-Management:
-  cattery download                   Download all local models + runtime
-  cattery download --kind stt        Download all STT artefacts
-  cattery download --model 1         Download TTS model 1 + all voices
-  cattery status --kind stt          Show STT status only
 
 On first run, cattery downloads the model (~92MB) and runtime (~18MB).
 No accounts or API keys required.
@@ -493,7 +534,7 @@ func looksLikeCommand(s string) bool {
 		return false
 	}
 	// Known commands for fuzzy matching
-	commands := []string{"serve", "list", "status", "download", "help", "version"}
+	commands := commandNames()
 	lower := strings.ToLower(s)
 	for _, cmd := range commands {
 		if lower == cmd {
@@ -546,7 +587,7 @@ func resolveTTSModel(ref string) *registry.Model {
 	return registry.Resolve(registry.KindTTS, ref)
 }
 
-func parseKindAndModel(args []string) (registry.Kind, string, error) {
+func parseSelectionArgs(args []string) (registry.Kind, string, error) {
 	var (
 		kind     registry.Kind
 		modelRef string
@@ -574,6 +615,16 @@ func parseKindAndModel(args []string) (registry.Kind, string, error) {
 			if strings.HasPrefix(args[i], "--") {
 				return "", "", fmt.Errorf("unknown flag: %s\nRun 'cattery help' for usage", args[i])
 			}
+			if parsed, ok := parseKindAlias(args[i]); ok {
+				if kind != "" && kind != parsed {
+					return "", "", fmt.Errorf("conflicting kind filters %q and %q", kind, parsed)
+				}
+				kind = parsed
+				continue
+			}
+			if modelRef != "" {
+				return "", "", fmt.Errorf("unexpected argument %q", args[i])
+			}
 			modelRef = args[i]
 		}
 	}
@@ -582,24 +633,38 @@ func parseKindAndModel(args []string) (registry.Kind, string, error) {
 }
 
 func parseKind(ref string) (registry.Kind, error) {
+	if kind, ok := parseKindAlias(ref); ok {
+		return kind, nil
+	}
+	return "", fmt.Errorf("unknown kind %q (want: speak, listen, runtime)", ref)
+}
+
+func parseKindAlias(ref string) (registry.Kind, bool) {
 	switch strings.ToLower(strings.TrimSpace(ref)) {
-	case "tts":
-		return registry.KindTTS, nil
-	case "stt":
-		return registry.KindSTT, nil
+	case "speak", "tts":
+		return registry.KindTTS, true
+	case "listen", "stt":
+		return registry.KindSTT, true
 	case "runtime", "ort":
-		return registry.KindRuntime, nil
+		return registry.KindRuntime, true
 	default:
-		return "", fmt.Errorf("unknown kind %q (want: tts, stt, runtime)", ref)
+		return "", false
 	}
 }
 
-func selectLocalModels(kind registry.Kind, modelRef string) ([]*registry.Model, error) {
+func selectModels(kind registry.Kind, modelRef string, localOnly bool) ([]*registry.Model, error) {
 	if modelRef != "" {
-		model := resolveLocalModel(kind, modelRef)
+		model, err := resolveModel(kind, modelRef, localOnly)
+		if err != nil {
+			return nil, err
+		}
 		if model == nil {
 			if kind != "" {
-				return nil, fmt.Errorf("unknown %s model %q", kindTitle(kind), modelRef)
+				scope := kindTitle(kind)
+				if localOnly {
+					return nil, fmt.Errorf("unknown local %s model %q", scope, modelRef)
+				}
+				return nil, fmt.Errorf("unknown %s model %q", scope, modelRef)
 			}
 			return nil, fmt.Errorf("unknown model %q", modelRef)
 		}
@@ -607,35 +672,66 @@ func selectLocalModels(kind registry.Kind, modelRef string) ([]*registry.Model, 
 	}
 
 	if kind != "" {
-		models := localModelsByKind(kind)
+		models := modelsForKind(kind, localOnly)
 		if len(models) == 0 {
-			return nil, fmt.Errorf("no local %s models registered", kindTitle(kind))
+			if localOnly {
+				return nil, fmt.Errorf("no local %s models registered", kindTitle(kind))
+			}
+			return nil, fmt.Errorf("no %s models registered", kindTitle(kind))
 		}
 		return models, nil
 	}
 
-	return allLocalModels(displayKindOrder()), nil
+	if localOnly {
+		return allLocalModels(displayKindOrder()), nil
+	}
+	return allVisibleModels(displayKindOrder()), nil
 }
 
-func resolveLocalModel(kind registry.Kind, ref string) *registry.Model {
-	if kind != "" {
-		model := registry.Resolve(kind, ref)
-		if model != nil && model.Location == registry.Local {
-			return model
-		}
-		return nil
+func resolveModel(kind registry.Kind, ref string, localOnly bool) (*registry.Model, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return nil, nil
 	}
 
-	if model := registry.Get(ref); model != nil && model.Location == registry.Local {
-		return model
+	if kind != "" {
+		model := registry.Resolve(kind, ref)
+		if modelAllowed(model, localOnly) {
+			return model, nil
+		}
+		return nil, nil
 	}
-	for _, groupKind := range displayKindOrder() {
-		model := registry.Resolve(groupKind, ref)
-		if model != nil && model.Location == registry.Local {
-			return model
+
+	if model := registry.Get(ref); modelAllowed(model, localOnly) && modelKindAddressable(model.Kind) {
+		return model, nil
+	}
+
+	if modelIndex, ok := parseIndex(ref); ok {
+		var matches []*registry.Model
+		for _, groupKind := range displayKindOrder() {
+			model := registry.GetByIndex(groupKind, modelIndex)
+			if modelAllowed(model, localOnly) {
+				matches = append(matches, model)
+			}
+		}
+		if len(matches) > 1 {
+			return nil, fmt.Errorf(
+				"model index %d is ambiguous; use speak/listen or --kind",
+				modelIndex,
+			)
+		}
+		if len(matches) == 1 {
+			return matches[0], nil
 		}
 	}
-	return nil
+
+	for _, groupKind := range displayKindOrder() {
+		model := registry.Resolve(groupKind, ref)
+		if modelAllowed(model, localOnly) {
+			return model, nil
+		}
+	}
+	return nil, nil
 }
 
 func allLocalModels(order []registry.Kind) []*registry.Model {
@@ -646,6 +742,21 @@ func allLocalModels(order []registry.Kind) []*registry.Model {
 	return out
 }
 
+func allVisibleModels(order []registry.Kind) []*registry.Model {
+	var out []*registry.Model
+	for _, kind := range order {
+		out = append(out, visibleModelsByKind(kind)...)
+	}
+	return out
+}
+
+func modelsForKind(kind registry.Kind, localOnly bool) []*registry.Model {
+	if localOnly {
+		return localModelsByKind(kind)
+	}
+	return visibleModelsByKind(kind)
+}
+
 func localModelsByKind(kind registry.Kind) []*registry.Model {
 	var out []*registry.Model
 	for _, model := range registry.GetByKind(kind) {
@@ -654,6 +765,10 @@ func localModelsByKind(kind registry.Kind) []*registry.Model {
 		}
 	}
 	return out
+}
+
+func visibleModelsByKind(kind registry.Kind) []*registry.Model {
+	return registry.GetByKind(kind)
 }
 
 func modelsByKind(models []*registry.Model, kind registry.Kind) []*registry.Model {
@@ -674,7 +789,32 @@ func reorderModels(models []*registry.Model, order []registry.Kind) []*registry.
 	return out
 }
 
+func orderedKindsFor(models []*registry.Model, order []registry.Kind) []registry.Kind {
+	seen := make(map[registry.Kind]bool)
+	out := make([]registry.Kind, 0, len(order))
+
+	for _, kind := range order {
+		if len(modelsByKind(models, kind)) == 0 {
+			continue
+		}
+		seen[kind] = true
+		out = append(out, kind)
+	}
+	for _, model := range models {
+		if seen[model.Kind] {
+			continue
+		}
+		seen[model.Kind] = true
+		out = append(out, model.Kind)
+	}
+	return out
+}
+
 func displayKindOrder() []registry.Kind {
+	return []registry.Kind{registry.KindTTS, registry.KindSTT}
+}
+
+func cliKindOrder() []registry.Kind {
 	return []registry.Kind{registry.KindTTS, registry.KindSTT, registry.KindRuntime}
 }
 
@@ -692,6 +832,68 @@ func kindTitle(kind registry.Kind) string {
 		return "Runtime"
 	default:
 		return strings.ToUpper(string(kind))
+	}
+}
+
+func commandNames() []string {
+	return []string{"speak", "listen", "serve", "list", "status", "download", "help", "version"}
+}
+
+func parseIndex(ref string) (int, bool) {
+	var index int
+	if _, err := fmt.Sscanf(strings.TrimSpace(ref), "%d", &index); err != nil || index < 1 {
+		return 0, false
+	}
+	return index, true
+}
+
+func modelAllowed(model *registry.Model, localOnly bool) bool {
+	if model == nil {
+		return false
+	}
+	return !localOnly || model.Location == registry.Local
+}
+
+func modelKindAddressable(kind registry.Kind) bool {
+	switch kind {
+	case registry.KindTTS, registry.KindSTT:
+		return true
+	default:
+		return false
+	}
+}
+
+func modelReady(model *registry.Model, status localModelStatus) bool {
+	if model == nil || model.Location != registry.Local {
+		return false
+	}
+	if len(model.Voices) == 0 {
+		return status.filesReady()
+	}
+	return status.filesReady() && status.downloadedVoices == status.totalVoices
+}
+
+func voiceReadyMarker(dataDir string, model *registry.Model, voice registry.Voice) string {
+	if model == nil || model.Location != registry.Local {
+		return " "
+	}
+	if _, err := os.Stat(paths.ArtefactFile(dataDir, model.ID, voice.File.Filename)); err == nil {
+		return "✓"
+	}
+	return " "
+}
+
+func voiceSymbol(model *registry.Model, voice registry.Voice) string {
+	if model != nil && model.Location == registry.Remote {
+		return "●"
+	}
+	switch voice.Gender {
+	case "male":
+		return "♂"
+	case "female":
+		return "♀"
+	default:
+		return "●"
 	}
 }
 

@@ -74,7 +74,7 @@ var models = []*Model{
 		ID:          kokoroModelID,
 		Kind:        KindTTS,
 		Location:    Local,
-		Name:        "Kokoro",
+		Name:        "Kokoro 82M",
 		Description: "High-quality int8 quantized TTS model",
 		Lang:        []string{"en"},
 		Files: []Artefact{
