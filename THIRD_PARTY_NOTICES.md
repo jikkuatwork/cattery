@@ -7,9 +7,8 @@ and model assets used by `cattery`. It is an engineering audit, not legal advice
 
 ## Current status
 
-- This repository does not currently contain a top-level `LICENSE` file for
-  `cattery` itself. Until the owner adds one, the project code is not
-  open-source licensed by default.
+- This repository now ships a top-level `LICENSE` and `NOTICE`; the
+  `cattery` code is licensed under Apache-2.0.
 - `cattery` shells out to a system-installed `espeak-ng` binary from
   `phonemize/espeak.go`; it does not vendor or bundle `espeak-ng`.
 - `cattery` downloads ONNX Runtime from Microsoft's official releases and
@@ -50,11 +49,10 @@ and model assets used by `cattery`. It is an engineering audit, not legal advice
 
 ## Blocking follow-ups
 
-- Add a root `LICENSE` file for `cattery` itself.
 - Add Apache-2.0 license text and upstream attribution to the
   `cattery-artefacts` repository.
-- Ship this notice file, or an equivalent third-party notices file, with any
-  future packaged binary releases.
+- Ship `LICENSE`, `NOTICE`, and this notice file with any future packaged
+  binary releases.
 - Re-run the audit if `cattery` ever bundles ONNX Runtime, vendors model files
   directly in this repo, or redistributes `espeak-ng`.
 
@@ -64,4 +62,6 @@ and model assets used by `cattery`. It is an engineering audit, not legal advice
 - `download/download.go`
 - `phonemize/espeak.go`
 - `scripts/upload-artefacts.sh`
+- `LICENSE`
+- `NOTICE`
 - `koder/issues/07_license_audit.md`

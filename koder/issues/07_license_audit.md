@@ -3,8 +3,9 @@
 ## Status: open
 ## Priority: P1
 
-Audit completed on 2026-03-21. The issue remains open because the compliance
-follow-through is not finished yet.
+Audit completed on 2026-03-21. Repo-local licensing is now in place:
+`cattery` ships a root Apache-2.0 `LICENSE` and `NOTICE`. The issue remains
+open because the compliance follow-through is not finished yet.
 
 ## Findings
 
@@ -17,9 +18,8 @@ follow-through is not finished yet.
   still needs Apache compliance material.
 - `espeak-ng` is GPL-3.0-or-later. Current usage is via `os/exec`, which is a
   safer boundary than bundling or linking, so keep it external.
-- The `cattery` repo itself still has no top-level `LICENSE` file. That blocks
-  clean open-source distribution of this project's own code regardless of the
-  third-party components.
+- The `cattery` repo code is now Apache-2.0. That clears the repo-local
+  licensing gap, but not the artefacts-repo and release-packaging follow-up.
 
 ## Answer To The Key Question
 
@@ -30,11 +30,13 @@ attribution obligations correctly."
 
 ## Blocking Tasks
 
-- [ ] Add a root `LICENSE` file for `cattery` itself.
+- [x] Add a root `LICENSE` file for `cattery` itself.
+- [x] Add a root `NOTICE` file for `cattery` itself.
 - [ ] Add Apache-2.0 license text to `cattery-artefacts`.
 - [ ] Add upstream attribution in `cattery-artefacts` for both the original
       Kokoro model and the ONNX Community conversion source.
-- [ ] Ship third-party notices with packaged binary releases.
+- [ ] Ship `LICENSE`, `NOTICE`, and third-party notices with packaged binary
+      releases.
 - [ ] Re-review licensing before bundling ONNX Runtime or `espeak-ng`.
 
 ## Notes

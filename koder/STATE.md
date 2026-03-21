@@ -88,7 +88,7 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [04](issues/04_cli.md) | CLI + model download | **done** | P1 |
 | [05](issues/05_cross_platform_build.md) | Cross-platform build | open | P2 |
 | [06](issues/06_rest_server.md) | REST API server | **done** | P1 |
-| [07](issues/07_license_audit.md) | License audit (model hosting, deps) | open (audit complete) | P1 |
+| [07](issues/07_license_audit.md) | License audit (model hosting, deps) | open (audit + repo license done) | P1 |
 | [08](issues/08_stt_module.md) | Speech-to-text module | open | P2 |
 | [09](issues/09_pretty_help.md) | Pretty CLI help | open | P3 |
 | [10](issues/10_server_api_audit.md) | Server API audit for apps | open | P2 |
@@ -101,8 +101,8 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 
 - Implementation plans for `#07`, `#10`, and `#11` now live in
   `koder/plans/`.
-- License compliance follow-through (#07) — add project license + artefact notices; blocks distribution
-  Audit baseline is now captured in `THIRD_PARTY_NOTICES.md`.
+- License compliance follow-through (#07) — artefacts-repo notices +
+  release-packaging follow-up remain. Repo code is now Apache-2.0.
 - Server API audit (#10) + auth (#11) — before apps consume it
 - STT module (#08) — completes audio pipeline
 - LLM proxy (#12) — unified AI backend
@@ -124,6 +124,8 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 - **Shared char budget**: total characters across all queued requests bounded (default 500). Caps peak RSS regardless of request distribution.
 - **Preflight package**: checks RAM, espeak-ng, model files, and ORT presence; current request handling uses the memory gate and status/CLI expose the rest.
 - **Module path**: `github.com/jikkuatwork/cattery` — matches repo URL for `go get`.
+- **Project license**: `cattery` code is Apache-2.0; packaged releases should
+  carry `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`.
 - **License audit documented**: current third-party licensing and distribution obligations are recorded in `THIRD_PARTY_NOTICES.md`.
 - **Repo-local Codex workflow**: `.codex/skills/open` and `.codex/skills/close` are tracked in-repo, not globally. `open` should read `koder/STATE.md` first after restarts; `close` should sync `koder/STATE.md`, validate changed local skills, and commit a coherent session when explicitly invoked.
 
