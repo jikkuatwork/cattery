@@ -1,6 +1,8 @@
 // Package registry defines available models, voices, and their metadata.
 package registry
 
+import "strings"
+
 // Model describes a TTS model available for download.
 type Model struct {
 	ID          string  // e.g. "kokoro-82m-v1.0"
@@ -85,14 +87,25 @@ func Get(id string) *Model {
 	return Models[id]
 }
 
-// GetVoice finds a voice by ID within a model.
-func (m *Model) GetVoice(voiceID string) *Voice {
+// GetVoice finds a voice by ID or short name (case-insensitive).
+// Matches: "af_heart", "heart", "Heart"
+func (m *Model) GetVoice(name string) *Voice {
+	lower := strings.ToLower(name)
 	for i := range m.Voices {
-		if m.Voices[i].ID == voiceID {
+		if m.Voices[i].ID == lower || strings.ToLower(m.Voices[i].Name) == lower {
 			return &m.Voices[i]
 		}
 	}
 	return nil
+}
+
+// ListModels returns all registered model IDs with their display names.
+func ListModels() []Model {
+	var out []Model
+	for _, m := range Models {
+		out = append(out, *m)
+	}
+	return out
 }
 
 // VoicesByAccent returns voices grouped by accent.
