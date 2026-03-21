@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/kodeman/cattery/audio"
 	"github.com/kodeman/cattery/phonemize"
@@ -54,31 +55,39 @@ const (
 )
 
 func main() {
+	totalStart := time.Now()
+
 	libPath := findOrtLib()
 	if libPath == "" {
 		log.Fatal("Cannot find libonnxruntime shared library in models-data/")
 	}
 	fmt.Println("ORT library:", libPath)
 
+	// --- ORT Initialization ---
+	t0 := time.Now()
 	ort.SetSharedLibraryPath(libPath)
 	if err := ort.InitializeEnvironment(); err != nil {
 		log.Fatal("InitializeEnvironment:", err)
 	}
 	defer ort.DestroyEnvironment()
+	fmt.Printf("[TIMING] ORT init:          %v\n", time.Since(t0))
 
-	// Text -> phonemes -> tokens
+	// --- Phonemization ---
 	text := "Hello, world. This is a test of the Cattery text to speech system."
 	if len(os.Args) > 1 {
 		text = os.Args[1]
 	}
 
+	t0 = time.Now()
 	p := &phonemize.EspeakPhonemizer{Voice: "en-us"}
 	phonemes, err := p.Phonemize(text)
 	if err != nil {
 		log.Fatal("Phonemize: ", err)
 	}
+	phonemizeTime := time.Since(t0)
 	tokens := tokenize(phonemes)
 	fmt.Printf("Text: %s\nPhonemes: %s\nTokens (%d): %v\n", text, phonemes, len(tokens), tokens)
+	fmt.Printf("[TIMING] Phonemization:     %v\n", phonemizeTime)
 
 	// Load voice style vector — select row indexed by token count
 	style, err := loadVoice(voiceFile, len(tokens))
@@ -112,7 +121,8 @@ func main() {
 	}
 	defer speedTensor.Destroy()
 
-	// Create session
+	// --- Session Creation (model loading) ---
+	t0 = time.Now()
 	session, err := ort.NewDynamicAdvancedSession(
 		modelFile,
 		[]string{"input_ids", "style", "speed"},
@@ -123,9 +133,11 @@ func main() {
 		log.Fatal("NewDynamicAdvancedSession: ", err)
 	}
 	defer session.Destroy()
+	fmt.Printf("[TIMING] Session creation:  %v\n", time.Since(t0))
 
-	// Run inference (nil output = auto-allocate)
+	// --- Inference ---
 	fmt.Println("Running inference...")
+	t0 = time.Now()
 	outputs := []ort.Value{nil}
 	err = session.Run(
 		[]ort.Value{tokenTensor, styleTensor, speedTensor},
@@ -134,7 +146,9 @@ func main() {
 	if err != nil {
 		log.Fatal("Run: ", err)
 	}
+	inferenceTime := time.Since(t0)
 	defer outputs[0].Destroy()
+	fmt.Printf("[TIMING] Inference:         %v\n", inferenceTime)
 
 	audioTensor, ok := outputs[0].(*ort.Tensor[float32])
 	if !ok {
@@ -144,7 +158,8 @@ func main() {
 	fmt.Printf("Got %d samples (%.2fs at %dHz)\n",
 		len(samples), float64(len(samples))/float64(sampleRate), sampleRate)
 
-	// Write WAV
+	// --- WAV Writing ---
+	t0 = time.Now()
 	f, err := os.Create(outputFile)
 	if err != nil {
 		log.Fatal("Create: ", err)
@@ -154,7 +169,22 @@ func main() {
 	if err := audio.WriteWAV(f, samples, sampleRate); err != nil {
 		log.Fatal("WriteWAV: ", err)
 	}
+	fmt.Printf("[TIMING] WAV writing:       %v\n", time.Since(t0))
 	fmt.Println("Written to", outputFile)
+
+	// --- Memory Stats ---
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	fmt.Println()
+	fmt.Println("=== Memory Stats ===")
+	fmt.Printf("  HeapAlloc:    %.2f MB\n", float64(m.HeapAlloc)/1024/1024)
+	fmt.Printf("  HeapSys:      %.2f MB\n", float64(m.HeapSys)/1024/1024)
+	fmt.Printf("  HeapInuse:    %.2f MB\n", float64(m.HeapInuse)/1024/1024)
+	fmt.Printf("  TotalAlloc:   %.2f MB\n", float64(m.TotalAlloc)/1024/1024)
+	fmt.Printf("  Sys (total):  %.2f MB\n", float64(m.Sys)/1024/1024)
+	fmt.Printf("  NumGC:        %d\n", m.NumGC)
+
+	fmt.Printf("\n[TIMING] Total wall clock:  %v\n", time.Since(totalStart))
 }
 
 // tokenize converts IPA phoneme string to Kokoro token IDs.
