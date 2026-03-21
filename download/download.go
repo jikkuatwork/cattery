@@ -1,8 +1,9 @@
 // Package download handles fetching model files and ORT runtime on first run.
 //
-// Model and voice files are served from GitHub Releases on kodeman/cattery-models.
+// Model and voice files are served from jikkuatwork/cattery-artefacts (Git LFS).
 // ORT runtime is served from Microsoft's official GitHub Releases.
 // All files are verified against SHA256 checksums.
+// Downloads are resumable and show progress bars.
 package download
 
 import (
@@ -17,82 +18,199 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
+
+	"github.com/kodeman/cattery/paths"
+	"github.com/kodeman/cattery/registry"
 )
 
 const (
-	ortVersion = "1.24.1"
-	modelName  = "kokoro-82m-v1.0"
-	// Raw file URL via GitHub (works with LFS).
-	artefactsBaseURL = "https://github.com/jikkuatwork/cattery-artefacts/raw/main/models/" + modelName
+	ortVersion       = "1.24.1"
+	artefactsBaseURL = "https://github.com/jikkuatwork/cattery-artefacts/raw/main/models"
 )
 
-// Known SHA256 checksums for release assets.
-var checksums = map[string]string{
-	"model_quantized.onnx":                    "fbae9257e1e05ffc727e951ef9b9c98418e6d79f1c9b6b13bd59f5c9028a1478",
-	"af_heart.bin":                             "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b",
-	"libonnxruntime.so.1.24.1":                "7954e8bdedb497f830c6a679e818d98399b7f4d81ade1126c3e0be74d28111ab",
-}
-
-// Files that need to be present for cattery to run.
-type Files struct {
-	Model   string // path to ONNX model
-	Voice   string // path to voice .bin
-	OrtLib  string // path to libonnxruntime shared library
-	DataDir string // base directory for all files
+// Result holds the paths to all required files after Ensure completes.
+type Result struct {
+	ModelPath string
+	VoicePath string
+	ORTLib    string
+	DataDir   string
 }
 
 // Ensure checks if all required files exist, downloading any that are missing.
-// progress is called with status messages.
-func Ensure(dataDir string, voice string, progress func(string)) (*Files, error) {
+// Runs pre-flight checks before downloading.
+func Ensure(dataDir string, model *registry.Model, voice *registry.Voice) (*Result, error) {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return nil, err
 	}
 
-	files := &Files{
-		DataDir: dataDir,
-		Model:   filepath.Join(dataDir, "model_quantized.onnx"),
-		Voice:   filepath.Join(dataDir, "voices", voice+".bin"),
-		OrtLib:  findOrtLib(dataDir),
+	result := &Result{
+		DataDir:   dataDir,
+		ModelPath: paths.ModelFile(dataDir, model.ID, model.Filename),
+		VoicePath: paths.VoiceFile(dataDir, model.ID, voice.ID),
+		ORTLib:    findOrtLib(paths.ORTLib(dataDir)),
+	}
+
+	// Calculate total bytes needed
+	var needed int64
+	if result.ORTLib == "" {
+		needed += 20_000_000 // ~18MB ORT + tar overhead
+	}
+	if !fileExists(result.ModelPath) {
+		needed += model.SizeBytes
+	}
+	if !fileExists(result.VoicePath) {
+		needed += voice.SizeBytes
+	}
+
+	if needed > 0 {
+		if err := checkDiskSpace(dataDir, needed); err != nil {
+			return nil, err
+		}
 	}
 
 	// Download ORT runtime if missing
-	if files.OrtLib == "" {
-		progress("Downloading ONNX Runtime " + ortVersion + "...")
-		lib, err := downloadORT(dataDir)
+	if result.ORTLib == "" {
+		lib, err := downloadORT(paths.ORTLib(dataDir))
 		if err != nil {
 			return nil, fmt.Errorf("download ORT: %w", err)
 		}
-		files.OrtLib = lib
+		result.ORTLib = lib
 	}
 
 	// Download model if missing
-	if !fileExists(files.Model) {
-		progress("Downloading Kokoro model (92MB)...")
-		url := artefactsBaseURL + "/model_quantized.onnx"
-		if err := downloadFileVerified(url, files.Model, checksums["model_quantized.onnx"]); err != nil {
+	if !fileExists(result.ModelPath) {
+		url := fmt.Sprintf("%s/%s/%s", artefactsBaseURL, model.ID, model.Filename)
+		if err := downloadFileResumable(url, result.ModelPath, model.SizeBytes, model.SHA256, model.Name); err != nil {
 			return nil, fmt.Errorf("download model: %w", err)
 		}
 	}
 
 	// Download voice if missing
-	if !fileExists(files.Voice) {
-		progress(fmt.Sprintf("Downloading voice '%s'...", voice))
-		if err := os.MkdirAll(filepath.Dir(files.Voice), 0755); err != nil {
-			return nil, err
-		}
-		voiceFile := voice + ".bin"
-		url := artefactsBaseURL + "/voices/" + voiceFile
-		if err := downloadFileVerified(url, files.Voice, checksums[voiceFile]); err != nil {
-			return nil, fmt.Errorf("download voice: %w", err)
+	if !fileExists(result.VoicePath) {
+		url := fmt.Sprintf("%s/%s/voices/%s.bin", artefactsBaseURL, model.ID, voice.ID)
+		label := fmt.Sprintf("Voice: %s", voice.Name)
+		if err := downloadFileResumable(url, result.VoicePath, voice.SizeBytes, voice.SHA256, label); err != nil {
+			return nil, fmt.Errorf("download voice %q: %w", voice.Name, err)
 		}
 	}
 
-	return files, nil
+	return result, nil
 }
 
-// downloadORT downloads and extracts the ONNX Runtime shared library
-// from Microsoft's official GitHub Releases.
-func downloadORT(dataDir string) (string, error) {
+// checkDiskSpace verifies enough space is available.
+func checkDiskSpace(dir string, needed int64) error {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(dir, &stat); err != nil {
+		return nil // can't check, proceed anyway
+	}
+	avail := int64(stat.Bavail) * int64(stat.Bsize)
+	if avail < needed {
+		return fmt.Errorf("not enough disk space: need %s, have %s in %s",
+			formatBytes(needed), formatBytes(avail), dir)
+	}
+	return nil
+}
+
+// downloadFileResumable downloads a file with resume support and progress bar.
+// If a .tmp partial file exists, it resumes from where it left off.
+func downloadFileResumable(url, destPath string, expectedSize int64, expectedSHA256, label string) error {
+	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		return err
+	}
+
+	tmpPath := destPath + ".tmp"
+	var existingSize int64
+
+	// Check for partial download
+	if info, err := os.Stat(tmpPath); err == nil {
+		existingSize = info.Size()
+	}
+
+	// Build HTTP request with Range header for resume
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+	if existingSize > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingSize))
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		// Full response — start from scratch
+		existingSize = 0
+	case http.StatusPartialContent:
+		// Resume supported
+	case http.StatusRequestedRangeNotSatisfiable:
+		// File already complete or server doesn't support range
+		existingSize = 0
+		resp.Body.Close()
+		req.Header.Del("Range")
+		resp, err = http.DefaultClient.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+	case http.StatusNotFound:
+		return fmt.Errorf("file not found (404): %s\nThe download URL may have changed. Try updating cattery.", url)
+	default:
+		return fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
+	}
+
+	// Determine total size
+	totalSize := expectedSize
+	if totalSize == 0 && resp.ContentLength > 0 {
+		totalSize = resp.ContentLength + existingSize
+	}
+
+	// Open file for append or create
+	flags := os.O_CREATE | os.O_WRONLY
+	if existingSize > 0 {
+		flags |= os.O_APPEND
+	} else {
+		flags |= os.O_TRUNC
+	}
+
+	f, err := os.OpenFile(tmpPath, flags, 0644)
+	if err != nil {
+		return err
+	}
+
+	// Write with progress
+	pw := newProgressWriter(f, label, totalSize)
+	pw.written = existingSize // account for already-downloaded portion
+	_, copyErr := io.Copy(pw, resp.Body)
+	f.Close()
+	pw.finish()
+
+	if copyErr != nil {
+		return fmt.Errorf("download interrupted: %w (partial file kept for resume)", copyErr)
+	}
+
+	// Verify checksum
+	if expectedSHA256 != "" {
+		if err := verifyChecksum(tmpPath, expectedSHA256); err != nil {
+			os.Remove(tmpPath)
+			return err
+		}
+	}
+
+	return os.Rename(tmpPath, destPath)
+}
+
+// downloadORT downloads and extracts the ONNX Runtime shared library.
+func downloadORT(ortDir string) (string, error) {
+	if err := os.MkdirAll(ortDir, 0755); err != nil {
+		return "", err
+	}
+
 	arch := runtime.GOARCH
 	if arch == "arm64" {
 		arch = "aarch64"
@@ -116,44 +234,58 @@ func downloadORT(dataDir string) (string, error) {
 			ortVersion, arch, ortVersion)
 		libName = fmt.Sprintf("libonnxruntime.%s.dylib", ortVersion)
 	default:
-		return "", fmt.Errorf("unsupported OS: %s", runtime.GOOS)
+		return "", fmt.Errorf("unsupported platform: %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
 
-	destPath := filepath.Join(dataDir, libName)
+	destPath := filepath.Join(ortDir, libName)
 	if fileExists(destPath) {
 		return destPath, nil
 	}
 
-	// Download tarball to temp file
-	tmpFile, err := os.CreateTemp("", "ort-*.tgz")
+	// Download tarball to temp
+	tmpFile, err := os.CreateTemp("", "cattery-ort-*.tgz")
 	if err != nil {
 		return "", err
 	}
 	defer os.Remove(tmpFile.Name())
-	defer tmpFile.Close()
 
-	if err := downloadToWriter(url, tmpFile); err != nil {
-		return "", fmt.Errorf("download: %w", err)
+	fmt.Fprintf(os.Stderr, "Downloading ONNX Runtime %s (%s/%s)...\n", ortVersion, runtime.GOOS, arch)
+	pw := newProgressWriter(tmpFile, "ONNX Runtime", 20_000_000) // approximate
+	resp, err := http.Get(url)
+	if err != nil {
+		tmpFile.Close()
+		return "", err
 	}
-	tmpFile.Close()
+	defer resp.Body.Close()
 
-	// Extract the lib file from the tarball
+	if resp.StatusCode == http.StatusNotFound {
+		tmpFile.Close()
+		return "", fmt.Errorf("ONNX Runtime not available for %s/%s at version %s", runtime.GOOS, arch, ortVersion)
+	}
+	if resp.StatusCode != http.StatusOK {
+		tmpFile.Close()
+		return "", fmt.Errorf("HTTP %d downloading ORT", resp.StatusCode)
+	}
+
+	if resp.ContentLength > 0 {
+		pw.total = resp.ContentLength
+	}
+
+	_, err = io.Copy(pw, resp.Body)
+	tmpFile.Close()
+	pw.finish()
+	if err != nil {
+		return "", err
+	}
+
+	// Extract lib from tarball
 	if err := extractFromTarGz(tmpFile.Name(), "lib/"+libName, destPath); err != nil {
 		return "", fmt.Errorf("extract: %w", err)
-	}
-
-	// Verify checksum if we have one
-	if expected, ok := checksums[libName]; ok {
-		if err := verifyChecksum(destPath, expected); err != nil {
-			os.Remove(destPath)
-			return "", err
-		}
 	}
 
 	return destPath, nil
 }
 
-// extractFromTarGz extracts a single file matching the suffix from a .tar.gz.
 func extractFromTarGz(tarPath, fileSuffix, destPath string) error {
 	f, err := os.Open(tarPath)
 	if err != nil {
@@ -194,35 +326,6 @@ func extractFromTarGz(tarPath, fileSuffix, destPath string) error {
 	return fmt.Errorf("file %q not found in archive", fileSuffix)
 }
 
-func downloadFileVerified(url, destPath, expectedSHA256 string) error {
-	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-		return err
-	}
-
-	// Download to temp file first, then verify and rename
-	tmpPath := destPath + ".tmp"
-	f, err := os.Create(tmpPath)
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmpPath) // cleanup on failure
-
-	if err := downloadToWriter(url, f); err != nil {
-		f.Close()
-		return err
-	}
-	f.Close()
-
-	// Verify checksum
-	if expectedSHA256 != "" {
-		if err := verifyChecksum(tmpPath, expectedSHA256); err != nil {
-			return err
-		}
-	}
-
-	return os.Rename(tmpPath, destPath)
-}
-
 func verifyChecksum(path, expected string) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -242,25 +345,12 @@ func verifyChecksum(path, expected string) error {
 	return nil
 }
 
-func downloadToWriter(url string, w io.Writer) error {
-	resp, err := http.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
-	}
-	_, err = io.Copy(w, resp.Body)
-	return err
-}
-
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
 
-func findOrtLib(dataDir string) string {
+func findOrtLib(ortDir string) string {
 	var pattern string
 	switch runtime.GOOS {
 	case "linux":
@@ -270,7 +360,7 @@ func findOrtLib(dataDir string) string {
 	case "windows":
 		pattern = "onnxruntime.dll"
 	}
-	matches, _ := filepath.Glob(filepath.Join(dataDir, pattern))
+	matches, _ := filepath.Glob(filepath.Join(ortDir, pattern))
 	if len(matches) == 0 {
 		return ""
 	}
