@@ -114,8 +114,8 @@ to a multi-modal audio system (STT → LLM API → TTS conversational loop).
 ### Orchestration
 
 Executing via **harnex Fire & Watch** (see `koder/workflows/harnex/dispatch.md`).
-Each issue runs through: `codex implements → claude reviews → codex fixes → merge`.
-One worktree per issue, merged to main before the next starts.
+All work on **main** — no worktrees, no feature branches, no review cycles.
+Flow: `codex implements → verify build → commit on main → next issue`.
 
 ### Dependency chain
 
