@@ -1,9 +1,9 @@
 // Package download handles fetching model files and ORT runtime on first run.
 //
-// Model and voice files are served from jikkuatwork/cattery-artefacts (Git LFS).
+// Local TTS artefacts default to jikkuatwork/cattery-artefacts (Git LFS).
+// STT artefacts may point at explicit auth-free URLs such as Hugging Face.
 // ORT runtime is served from Microsoft's official GitHub Releases.
-// All files are verified against SHA256 checksums.
-// Downloads show aligned progress bars.
+// Files are verified against SHA256 checksums where recorded.
 package download
 
 import (
@@ -25,172 +25,177 @@ import (
 )
 
 const (
-	ortVersion       = "1.24.1"
-	artefactsBaseURL = "https://github.com/jikkuatwork/cattery-artefacts/raw/main/models"
+	defaultORTVersion = "1.24.1"
+	defaultORTBytes   = 20_000_000
+	artefactsBaseURL  = "https://github.com/jikkuatwork/cattery-artefacts/raw/main/models"
 )
 
-// Result holds the paths to all required files after Ensure completes.
-// VoicePath is empty when no voice was requested.
+// Result holds local paths for the ensured artefacts.
 type Result struct {
-	ModelPath string
-	VoicePath string
-	ORTLib    string
-	DataDir   string
+	ORTLib string
+	Files  map[string]string
 }
 
-// Ensure checks if all required files exist, downloading any that are missing.
-// If voice is nil, it ensures only the model and ORT runtime.
-func Ensure(dataDir string, model *registry.Model, voice *registry.Voice) (*Result, error) {
+type pendingDownload struct {
+	label  string
+	url    string
+	dest   string
+	size   int64
+	sha256 string
+}
+
+// Ensure checks if a model's required files exist, downloading what is missing.
+// Optional voices are downloaded too. Local models also ensure the shared ORT
+// runtime is present.
+func Ensure(dataDir string, model *registry.Model, voices ...*registry.Voice) (*Result, error) {
+	if model == nil {
+		return nil, fmt.Errorf("missing registry model")
+	}
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return nil, err
 	}
 
 	result := &Result{
-		DataDir:   dataDir,
-		ModelPath: paths.ModelFile(dataDir, model.ID, model.Filename),
-		ORTLib:    findOrtLib(paths.ORTLib(dataDir)),
-	}
-	if voice != nil {
-		result.VoicePath = paths.VoiceFile(dataDir, model.ID, voice.ID)
+		ORTLib: findOrtLib(paths.ORTLib(dataDir)),
+		Files:  make(map[string]string),
 	}
 
-	needORT := result.ORTLib == ""
-	needModel := !fileExists(result.ModelPath)
-	needVoice := voice != nil && !fileExists(result.VoicePath)
+	pending := pendingModelDownloads(result, dataDir, model, voices)
+	needORT := needsORT(model) && result.ORTLib == ""
 
-	if !needORT && !needModel && !needVoice {
+	if !needORT && len(pending) == 0 {
 		return result, nil
 	}
 
-	// Pre-flight disk space check
-	var needed int64
+	var (
+		labels []string
+		needed int64
+	)
 	if needORT {
-		needed += 20_000_000
+		labels = append(labels, "Runtime")
+		needed += defaultORTBytes
 	}
-	if needModel {
-		needed += model.SizeBytes
-	}
-	if needVoice {
-		needed += voice.SizeBytes
+	for _, item := range pending {
+		labels = append(labels, item.label)
+		needed += item.size
 	}
 	if err := checkDiskSpace(dataDir, needed); err != nil {
 		return nil, err
 	}
 
-	// Compute label width for alignment
-	var labels []string
-	if needORT {
-		labels = append(labels, "Runtime")
-	}
-	if needModel {
-		labels = append(labels, model.Name)
-	}
-	if needVoice {
-		labels = append(labels, "Voice")
-	}
 	style := &barStyle{labelWidth: maxLen(labels)}
 
 	if needORT {
-		lib, err := downloadORT(paths.ORTLib(dataDir), style)
+		lib, err := downloadORT(paths.ORTLib(dataDir), ortVersionFor(model), style)
 		if err != nil {
 			return nil, fmt.Errorf("download ORT: %w", err)
 		}
 		result.ORTLib = lib
 	}
 
-	if needModel {
-		url := fmt.Sprintf("%s/%s/%s", artefactsBaseURL, model.ID, model.Filename)
-		if err := downloadWithBar(style, model.Name, url, result.ModelPath, model.SizeBytes, model.SHA256); err != nil {
-			return nil, fmt.Errorf("download model: %w", err)
-		}
-	}
-
-	if needVoice {
-		url := fmt.Sprintf("%s/%s/voices/%s.bin", artefactsBaseURL, model.ID, voice.ID)
-		if err := downloadWithBar(style, "Voice", url, result.VoicePath, voice.SizeBytes, voice.SHA256); err != nil {
-			return nil, fmt.Errorf("download voice %q: %w", voice.Name, err)
+	for _, item := range pending {
+		if err := downloadWithBar(style, item.label, item.url, item.dest, item.size, item.sha256); err != nil {
+			return nil, fmt.Errorf("download %s: %w", item.label, err)
 		}
 	}
 
 	return result, nil
 }
 
-// EnsureAll downloads ORT, the model, and all voices for a model.
-// Shows aligned progress bars: Runtime, Model (bytes), Voices (count).
+// EnsureAll downloads a model and all of its voices.
 func EnsureAll(dataDir string, model *registry.Model) error {
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		return err
+	_, err := Ensure(dataDir, model, model.VoiceRefs()...)
+	return err
+}
+
+func pendingModelDownloads(result *Result, dataDir string, model *registry.Model, voices []*registry.Voice) []pendingDownload {
+	var pending []pendingDownload
+
+	for _, file := range model.Files {
+		dest := paths.ArtefactFile(dataDir, model.ID, file.Filename)
+		result.Files[file.Filename] = dest
+		if fileExists(dest) {
+			continue
+		}
+		pending = append(pending, pendingDownload{
+			label:  artefactLabel(model, file),
+			url:    artefactURL(model, file),
+			dest:   dest,
+			size:   file.SizeBytes,
+			sha256: file.SHA256,
+		})
 	}
 
-	needORT := findOrtLib(paths.ORTLib(dataDir)) == ""
-	needModel := !fileExists(paths.ModelFile(dataDir, model.ID, model.Filename))
-
-	// Count missing voices
-	type pending struct {
-		voice *registry.Voice
-		url   string
-		dest  string
-	}
-	var missing []pending
-	for i := range model.Voices {
-		v := &model.Voices[i]
-		dest := paths.VoiceFile(dataDir, model.ID, v.ID)
-		if !fileExists(dest) {
-			url := fmt.Sprintf("%s/%s/voices/%s.bin", artefactsBaseURL, model.ID, v.ID)
-			missing = append(missing, pending{voice: v, url: url, dest: dest})
+	seen := make(map[string]bool)
+	for _, voice := range voices {
+		if voice == nil {
+			continue
 		}
-	}
-
-	if !needORT && !needModel && len(missing) == 0 {
-		return nil
-	}
-
-	// --- Runtime group ---
-	if needORT {
-		style := &barStyle{labelWidth: len("Runtime")}
-		if _, err := downloadORT(paths.ORTLib(dataDir), style); err != nil {
-			return fmt.Errorf("download ORT: %w", err)
+		key := voice.File.Filename
+		if seen[key] {
+			continue
 		}
-		fmt.Fprintln(os.Stderr)
+		seen[key] = true
+
+		dest := paths.ArtefactFile(dataDir, model.ID, voice.File.Filename)
+		result.Files[key] = dest
+		if fileExists(dest) {
+			continue
+		}
+		pending = append(pending, pendingDownload{
+			label:  voice.Name,
+			url:    artefactURL(model, voice.File),
+			dest:   dest,
+			size:   voice.File.SizeBytes,
+			sha256: voice.File.SHA256,
+		})
 	}
 
-	// --- Model group ---
-	if needModel || len(missing) > 0 {
-		fmt.Fprintf(os.Stderr, "%s\n", model.Name)
+	return pending
+}
 
-		// Compute label width for model sub-items
-		var labels []string
-		if needModel {
-			labels = append(labels, "Model")
-		}
-		if len(missing) > 0 {
-			labels = append(labels, "Voices")
-		}
-		style := &barStyle{labelWidth: maxLen(labels) + 1} // +1 for leading space
-
-		if needModel {
-			modelPath := paths.ModelFile(dataDir, model.ID, model.Filename)
-			url := fmt.Sprintf("%s/%s/%s", artefactsBaseURL, model.ID, model.Filename)
-			if err := downloadWithBar(style, " Model", url, modelPath, model.SizeBytes, model.SHA256); err != nil {
-				return fmt.Errorf("download model: %w", err)
-			}
-		}
-
-		if len(missing) > 0 {
-			b := newBar(" Voices", int64(len(missing)), false, style)
-			for i, m := range missing {
-				if err := downloadFile(m.url, m.dest, m.voice.SHA256); err != nil {
-					// skip failed voice, continue
-				}
-				b.set(int64(i + 1))
-			}
-			b.finish()
-		}
-
-		fmt.Fprintln(os.Stderr)
+func needsORT(model *registry.Model) bool {
+	if model == nil {
+		return false
 	}
+	if model.Kind == registry.KindRuntime {
+		return true
+	}
+	return model.Location == registry.Local
+}
 
-	return nil
+func ortVersionFor(model *registry.Model) string {
+	if model != nil && model.Kind == registry.KindRuntime {
+		return model.MetaString("version", defaultORTVersion)
+	}
+	runtimeModel := registry.Default(registry.KindRuntime)
+	if runtimeModel == nil {
+		return defaultORTVersion
+	}
+	return runtimeModel.MetaString("version", defaultORTVersion)
+}
+
+func artefactLabel(model *registry.Model, file registry.Artefact) string {
+	name := filepath.Base(file.Filename)
+	switch {
+	case model != nil && model.Kind == registry.KindTTS && len(model.Files) == 1:
+		return model.Name
+	case strings.Contains(name, "encoder"):
+		return "Encoder"
+	case strings.Contains(name, "decoder"):
+		return "Decoder"
+	case name == "tokenizer.json":
+		return "Tokenizer"
+	default:
+		return name
+	}
+}
+
+func artefactURL(model *registry.Model, file registry.Artefact) string {
+	if file.URL != "" {
+		return file.URL
+	}
+	return fmt.Sprintf("%s/%s/%s", artefactsBaseURL, model.ID, filepath.ToSlash(file.Filename))
 }
 
 // downloadWithBar downloads a file showing a byte-tracking progress bar.
@@ -244,48 +249,8 @@ func downloadWithBar(style *barStyle, label, url, destPath string, expectedSize 
 	return os.Rename(tmpPath, destPath)
 }
 
-// downloadFile downloads a file silently (no progress bar).
-func downloadFile(url, destPath, expectedSHA256 string) error {
-	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-		return err
-	}
-
-	resp, err := http.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	tmpPath := destPath + ".tmp"
-	f, err := os.Create(tmpPath)
-	if err != nil {
-		return err
-	}
-
-	_, copyErr := io.Copy(f, resp.Body)
-	f.Close()
-
-	if copyErr != nil {
-		os.Remove(tmpPath)
-		return copyErr
-	}
-
-	if expectedSHA256 != "" {
-		if err := verifyChecksum(tmpPath, expectedSHA256); err != nil {
-			os.Remove(tmpPath)
-			return err
-		}
-	}
-
-	return os.Rename(tmpPath, destPath)
-}
-
 // downloadORT downloads and extracts the ONNX Runtime shared library.
-func downloadORT(ortDir string, style *barStyle) (string, error) {
+func downloadORT(ortDir, version string, style *barStyle) (string, error) {
 	if err := os.MkdirAll(ortDir, 0755); err != nil {
 		return "", err
 	}
@@ -306,12 +271,12 @@ func downloadORT(ortDir string, style *barStyle) (string, error) {
 	switch runtime.GOOS {
 	case "linux":
 		url = fmt.Sprintf("https://github.com/microsoft/onnxruntime/releases/download/v%s/onnxruntime-linux-%s-%s.tgz",
-			ortVersion, arch, ortVersion)
-		libName = fmt.Sprintf("libonnxruntime.so.%s", ortVersion)
+			version, arch, version)
+		libName = fmt.Sprintf("libonnxruntime.so.%s", version)
 	case "darwin":
 		url = fmt.Sprintf("https://github.com/microsoft/onnxruntime/releases/download/v%s/onnxruntime-osx-%s-%s.tgz",
-			ortVersion, arch, ortVersion)
-		libName = fmt.Sprintf("libonnxruntime.%s.dylib", ortVersion)
+			version, arch, version)
+		libName = fmt.Sprintf("libonnxruntime.%s.dylib", version)
 	default:
 		return "", fmt.Errorf("unsupported platform: %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
@@ -321,7 +286,6 @@ func downloadORT(ortDir string, style *barStyle) (string, error) {
 		return destPath, nil
 	}
 
-	// Download tarball to temp file
 	tmpFile, err := os.CreateTemp("", "cattery-ort-*.tgz")
 	if err != nil {
 		return "", err
@@ -337,14 +301,14 @@ func downloadORT(ortDir string, style *barStyle) (string, error) {
 
 	if resp.StatusCode == http.StatusNotFound {
 		tmpFile.Close()
-		return "", fmt.Errorf("ONNX Runtime not available for %s/%s at version %s", runtime.GOOS, arch, ortVersion)
+		return "", fmt.Errorf("ONNX Runtime not available for %s/%s at version %s", runtime.GOOS, arch, version)
 	}
 	if resp.StatusCode != http.StatusOK {
 		tmpFile.Close()
 		return "", fmt.Errorf("HTTP %d downloading ORT", resp.StatusCode)
 	}
 
-	total := int64(20_000_000)
+	total := int64(defaultORTBytes)
 	if resp.ContentLength > 0 {
 		total = resp.ContentLength
 	}

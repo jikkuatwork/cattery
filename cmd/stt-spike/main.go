@@ -11,11 +11,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -30,10 +27,6 @@ import (
 )
 
 const (
-	hfBase      = "https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/main/onnx"
-	encoderFile = "encoder_model_quantized.onnx"
-	decoderFile = "decoder_model_merged_quantized.onnx"
-
 	sttSampleRate = 16000
 	ttsSampleRate = 24000
 
@@ -69,28 +62,31 @@ func (kv *kvCache) destroy() {
 
 func main() {
 	dataDir := paths.DataDir()
-	moonDir := filepath.Join(dataDir, "moonshine-tiny")
+	ttsModel := registry.Get("kokoro-82m-v1.0")
+	sttModel := registry.Get("moonshine-tiny-v1.0")
+	if ttsModel == nil || sttModel == nil {
+		log.Fatal("missing registry entries for spike")
+	}
 
 	fmt.Println("=== Moonshine STT Spike ===")
-	fmt.Println("Data dir:", moonDir)
+	fmt.Println("Data dir:", dataDir)
 
 	// Step 1: Ensure ORT + TTS model available
 	fmt.Println("\n--- Step 1: Ensure ORT + TTS available ---")
-	model := registry.Get("kokoro-82m-v1.0")
-	res, err := download.Ensure(dataDir, model, nil)
+	ttsRes, err := download.Ensure(dataDir, ttsModel)
 	if err != nil {
 		log.Fatal("download.Ensure: ", err)
 	}
 
-	// Step 2: Download Moonshine ONNX files
-	fmt.Println("\n--- Step 2: Download Moonshine ONNX ---")
-	encPath := filepath.Join(moonDir, encoderFile)
-	decPath := filepath.Join(moonDir, decoderFile)
-	tokPath := filepath.Join(moonDir, "tokenizer.json")
-
-	ensureFile(encPath, hfBase+"/"+encoderFile)
-	ensureFile(decPath, hfBase+"/"+decoderFile)
-	ensureFile(tokPath, "https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/main/tokenizer.json")
+	// Step 2: Ensure Moonshine artefacts
+	fmt.Println("\n--- Step 2: Ensure Moonshine STT artefacts ---")
+	sttRes, err := download.Ensure(dataDir, sttModel)
+	if err != nil {
+		log.Fatal("download.Ensure STT: ", err)
+	}
+	encPath := sttRes.Files[sttModel.MetaString("encoder_file", "encoder_model_quantized.onnx")]
+	decPath := sttRes.Files[sttModel.MetaString("decoder_file", "decoder_model_merged_quantized.onnx")]
+	tokPath := sttRes.Files[sttModel.MetaString("tokenizer_file", "tokenizer.json")]
 
 	// Step 3: Load tokenizer
 	fmt.Println("\n--- Step 3: Load tokenizer ---")
@@ -102,7 +98,7 @@ func main() {
 
 	// Step 4: Init ORT + load encoder
 	fmt.Println("\n--- Step 4: Init ORT + load encoder ---")
-	if err := ort.Init(res.ORTLib); err != nil {
+	if err := ort.Init(ttsRes.ORTLib); err != nil {
 		log.Fatal("ort.Init: ", err)
 	}
 	defer ort.Shutdown()
@@ -141,7 +137,7 @@ func main() {
 	// Step 6: Generate test audio via TTS
 	fmt.Println("\n--- Step 6: Generate test audio via TTS ---")
 	testText := "The quick brown fox jumps over the lazy dog."
-	samples := generateTestAudio(res, dataDir, testText)
+	samples := generateTestAudio(ttsRes, ttsModel, dataDir, testText)
 	fmt.Printf("Generated %d samples (%.2fs at %dHz)\n",
 		len(samples), float64(len(samples))/float64(ttsSampleRate), ttsSampleRate)
 
@@ -380,8 +376,13 @@ func decodeTokens(ids []int64) string {
 	return strings.TrimSpace(text)
 }
 
-func generateTestAudio(res *download.Result, dataDir, text string) []float32 {
-	eng, err := kokoro.New(res.ModelPath, dataDir)
+func generateTestAudio(res *download.Result, model *registry.Model, dataDir, text string) []float32 {
+	modelFile := model.PrimaryFile()
+	if modelFile == nil {
+		log.Fatal("missing primary TTS model file")
+	}
+
+	eng, err := kokoro.New(res.Files[modelFile.Filename], dataDir)
 	if err != nil {
 		log.Fatal("kokoro.New: ", err)
 	}
@@ -477,46 +478,6 @@ func loadTokenizer(path string) (map[int]string, error) {
 		result[id] = s
 	}
 	return result, nil
-}
-
-func ensureFile(path, url string) {
-	if _, err := os.Stat(path); err == nil {
-		fmt.Printf("  [exists] %s\n", filepath.Base(path))
-		return
-	}
-
-	fmt.Printf("  [download] %s\n", filepath.Base(path))
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		log.Fatal("mkdir: ", err)
-	}
-
-	resp, err := http.Get(url)
-	if err != nil {
-		log.Fatal("GET: ", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		log.Fatalf("HTTP %d for %s", resp.StatusCode, url)
-	}
-
-	tmpPath := path + ".tmp"
-	f, err := os.Create(tmpPath)
-	if err != nil {
-		log.Fatal("create: ", err)
-	}
-
-	n, err := io.Copy(f, resp.Body)
-	f.Close()
-	if err != nil {
-		os.Remove(tmpPath)
-		log.Fatal("download: ", err)
-	}
-	fmt.Printf("           %s (%s)\n", filepath.Base(path), formatBytes(n))
-
-	if err := os.Rename(tmpPath, path); err != nil {
-		log.Fatal("rename: ", err)
-	}
 }
 
 func formatBytes(b int64) string {

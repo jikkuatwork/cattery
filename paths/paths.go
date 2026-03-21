@@ -19,17 +19,22 @@ func ModelDir(dataDir, modelID string) string {
 	return filepath.Join(dataDir, "models", modelID)
 }
 
+// ArtefactFile returns the path for a model artefact.
+func ArtefactFile(dataDir, modelID, filename string) string {
+	return filepath.Join(ModelDir(dataDir, modelID), filepath.FromSlash(filename))
+}
+
 // VoiceFile returns the path for a voice file.
 func VoiceFile(dataDir, modelID, voiceID string) string {
-	return filepath.Join(dataDir, "models", modelID, "voices", voiceID+".bin")
+	return ArtefactFile(dataDir, modelID, "voices/"+voiceID+".bin")
 }
 
-// ModelFile returns the path for the model ONNX file.
+// ModelFile returns the path for a model file.
 func ModelFile(dataDir, modelID, filename string) string {
-	return filepath.Join(dataDir, "models", modelID, filename)
+	return ArtefactFile(dataDir, modelID, filename)
 }
 
-// ORTLib returns a glob pattern to find the ORT shared library.
+// ORTLib returns the directory that holds the ORT shared library.
 func ORTLib(dataDir string) string {
 	return filepath.Join(dataDir, "ort")
 }

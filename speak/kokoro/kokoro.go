@@ -150,7 +150,8 @@ func (e *Engine) Speak(w io.Writer, text string, opts speak.Options) error {
 		return fmt.Errorf("no speakable content in text")
 	}
 
-	style, err := loadVoice(result.VoicePath, len(tokens))
+	stylePath := result.Files[asset.File.Filename]
+	style, err := loadVoice(stylePath, len(tokens), styleDimFor(e.model))
 	if err != nil {
 		return fmt.Errorf("load voice: %w", err)
 	}
@@ -187,7 +188,7 @@ func (e *Engine) synthesize(tokens []int64, style []float32, speed float32) ([]f
 	}
 	defer tokenTensor.Destroy()
 
-	styleTensor, err := ort.NewTensor(ort.NewShape(1, styleDim), style)
+	styleTensor, err := ort.NewTensor(ort.NewShape(1, int64(styleDimFor(e.model))), style)
 	if err != nil {
 		return nil, fmt.Errorf("create style tensor: %w", err)
 	}
@@ -230,7 +231,7 @@ func tokenize(phonemes string) []int64 {
 	return tokens
 }
 
-func loadVoice(path string, numTokens int) ([]float32, error) {
+func loadVoice(path string, numTokens, styleDim int) ([]float32, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -313,16 +314,21 @@ func speakVoice(v *registry.Voice) speak.Voice {
 }
 
 func sampleRateFor(model *registry.Model) int {
-	if model != nil && model.SampleRate != 0 {
-		return model.SampleRate
-	}
-	return sampleRate
+	return model.MetaInt("sample_rate", sampleRate)
+}
+
+func styleDimFor(model *registry.Model) int {
+	return model.MetaInt("style_dim", styleDim)
 }
 
 func modelFromPath(dataDir, modelPath string) (*registry.Model, error) {
 	cleanModelPath := filepath.Clean(modelPath)
-	for _, model := range registry.Models {
-		want := filepath.Clean(paths.ModelFile(dataDir, model.ID, model.Filename))
+	for _, model := range registry.GetByKind(registry.KindTTS) {
+		file := model.PrimaryFile()
+		if file == nil {
+			continue
+		}
+		want := filepath.Clean(paths.ModelFile(dataDir, model.ID, file.Filename))
 		if want == cleanModelPath {
 			return model, nil
 		}

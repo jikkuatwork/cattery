@@ -62,12 +62,15 @@ func Check(minMemMB int) *Status {
 
 	// 3. Model files
 	dataDir := paths.DataDir()
-	model := registry.Get(registry.Default)
+	model := registry.Default(registry.KindTTS)
 	if model != nil {
-		modelPath := paths.ModelFile(dataDir, model.ID, model.Filename)
-		if _, err := os.Stat(modelPath); err != nil {
-			s.OK = false
-			s.addError(fmt.Sprintf("model not downloaded: %s", model.ID))
+		for _, file := range model.Files {
+			modelPath := paths.ModelFile(dataDir, model.ID, file.Filename)
+			if _, err := os.Stat(modelPath); err != nil {
+				s.OK = false
+				s.addError(fmt.Sprintf("model not downloaded: %s (%s)", model.ID, file.Filename))
+				break
+			}
 		}
 	}
 

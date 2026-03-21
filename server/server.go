@@ -37,7 +37,7 @@ type Config struct {
 	MaxChars    int           // shared character budget across all queued+active requests (default 500)
 	IdleTimeout time.Duration // evict engines after this idle duration (default 300s)
 	KeepAlive   bool          // if true, pre-warm engines and never evict
-	ModelID     string        // model to use (default registry.Default)
+	ModelID     string        // TTS model to use (default: first visible TTS model)
 }
 
 // Server is the cattery TTS HTTP server.
@@ -126,12 +126,16 @@ func New(cfg Config) (*Server, error) {
 		cfg.IdleTimeout = 300 * time.Second
 	}
 	if cfg.ModelID == "" {
-		cfg.ModelID = registry.Default
+		defaultModel := registry.Default(registry.KindTTS)
+		if defaultModel == nil {
+			return nil, fmt.Errorf("no TTS models registered")
+		}
+		cfg.ModelID = defaultModel.ID
 	}
 
-	model := registry.Get(cfg.ModelID)
+	model := registry.Resolve(registry.KindTTS, cfg.ModelID)
 	if model == nil {
-		return nil, fmt.Errorf("unknown model %q", cfg.ModelID)
+		return nil, fmt.Errorf("unknown TTS model %q", cfg.ModelID)
 	}
 
 	if !phonemize.Available() {
@@ -140,10 +144,15 @@ func New(cfg Config) (*Server, error) {
 
 	// Download model + ORT only. Voices are fetched lazily by Speak().
 	dataDir := paths.DataDir()
-	result, err := download.Ensure(dataDir, model, nil)
+	result, err := download.Ensure(dataDir, model)
 	if err != nil {
 		return nil, fmt.Errorf("download: %w", err)
 	}
+	modelFile := model.PrimaryFile()
+	if modelFile == nil {
+		return nil, fmt.Errorf("model %q has no files", model.ID)
+	}
+	modelPath := result.Files[modelFile.Filename]
 
 	engines := make(chan speak.Engine, cfg.Workers)
 
@@ -154,7 +163,7 @@ func New(cfg Config) (*Server, error) {
 		sem:       make(chan struct{}, cfg.Workers+cfg.QueueMax),
 		engines:   engines,
 		dataDir:   dataDir,
-		modelPath: result.ModelPath,
+		modelPath: modelPath,
 		ortLib:    result.ORTLib,
 	}
 
@@ -165,7 +174,7 @@ func New(cfg Config) (*Server, error) {
 			return nil, fmt.Errorf("init ORT: %w", err)
 		}
 		for i := 0; i < cfg.Workers; i++ {
-			eng, err := kokoro.New(result.ModelPath, dataDir)
+			eng, err := kokoro.New(modelPath, dataDir)
 			if err != nil {
 				return nil, fmt.Errorf("create engine %d: %w", i, err)
 			}
@@ -485,7 +494,7 @@ func (s *Server) synthesize(req TTSRequest, voice speak.Voice) (*bytes.Buffer, *
 	}
 	elapsed := time.Since(t0).Seconds()
 
-	duration := wavDurationFromSize(int64(buf.Len()), s.model.SampleRate)
+	duration := wavDurationFromSize(int64(buf.Len()), s.model.MetaInt("sample_rate", 24000))
 	rtf := 0.0
 	if duration > 0 {
 		rtf = elapsed / duration
