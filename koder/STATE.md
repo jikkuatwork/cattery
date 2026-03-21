@@ -89,27 +89,59 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [05](issues/05_cross_platform_build.md) | Cross-platform build | open | P2 |
 | [06](issues/06_rest_server.md) | REST API server | **done** | P1 |
 | [07](issues/07_license_audit.md) | License audit (model hosting, deps) | open (audit + repo license done) | P1 |
-| [08](issues/08_stt_module.md) | Speech-to-text module | open (spike proven) | P1 |
-| [09](issues/09_pretty_help.md) | Pretty CLI help | open | P3 |
-| [10](issues/10_server_api_audit.md) | Server API audit for apps | open | P2 |
+| [08](issues/08_stt_module.md) | Speech-to-text module | open (spike proven, superseded by #16-#21) | P1 |
+| [09](issues/09_pretty_help.md) | Pretty CLI help | open (subsumed by #19) | P3 |
+| [10](issues/10_server_api_audit.md) | Server API audit for apps | open (subsumed by #21) | P2 |
 | [11](issues/11_server_auth.md) | Optional server auth | open | P2 |
 | [12](issues/12_llm_proxy.md) | LLM proxy (Ollama/OpenRouter) | open | P2 |
 | [13](issues/13_local_4b_model.md) | Local 4B LLM via ONNX | open | P3 |
 | [14](issues/14_web_ui.md) | Embedded web UI | open | P3 |
 | [15](issues/15_mirror_json.md) | Artefact mirror registry (mirror.json) | open | P2 |
+| [16](issues/16_extract_ort_runtime.md) | Extract shared ORT runtime from engine/ | open | P0 |
+| [17](issues/17_tts_engine_interface.md) | TTS engine interface + package restructure | open | P0 |
+| [18](issues/18_registry_redesign.md) | Registry redesign for multi-modal artefacts | open | P1 |
+| [19](issues/19_cli_redesign.md) | CLI redesign: subcommand-per-modality | open | P1 |
+| [20](issues/20_stt_package.md) | STT package: Moonshine-tiny | open | P1 |
+| [21](issues/21_server_api_redesign.md) | Server API redesign for multi-modality | open | P2 |
+| [22](issues/22_bundle_espeak.md) | Bundle espeak-ng (zero system deps) | open | P1 |
+| [23](issues/23_openai_remote_engines.md) | OpenAI-compatible remote engines | open | P2 |
 
 ## What's Next
 
-- **STT module (#08)** — Moonshine-tiny spike proven (27MB, 28x real-time,
-  exact transcription). Next: wrap into `stt/` package, add to registry +
-  download, clarify weight license before distribution.
-- Implementation plans for `#07`, `#10`, and `#11` now live in
-  `koder/plans/`.
+**Multi-modality restructure** — 6-issue chain to transform cattery from TTS-only
+to a multi-modal audio system (STT → LLM API → TTS conversational loop).
+
+### Dependency chain
+
+```
+#16 Extract ORT runtime ──┬──→ #17 TTS engine interface ──→ #19 CLI redesign
+                          │                                       ↑
+                          ├──→ #18 Registry redesign ──→ #20 STT package ─┤
+                          │                                       ↓
+                          └─────────────────────────────→ #21 Server API redesign
+```
+
+### Execution order
+
+1. **#16** Extract ORT — foundation, pure refactor, no behavior change
+2. **#17** TTS interface — `speak/` + `speak/kokoro/`, delete `engine/`
+3. **#18** Registry redesign — multi-kind models, generalized download
+4. **#20** STT package — `listen/` + `listen/moonshine/`, from spike
+5. **#19** CLI redesign — `cattery speak`, `cattery listen`, updated list/status/download
+6. **#21** Server API — `/v1/speak`, `/v1/listen`, per-modality pools
+
+### Also open
+
+- **#22 Bundle espeak-ng** — eliminate the only system dependency. Download
+  espeak-ng binary + data alongside ORT/models. Truly single-command install.
+- **#23 OpenAI remote engines** — `OPENAI_API_KEY` unlocks remote TTS (OpenAI),
+  STT (Whisper), and future LLM. Works with OpenRouter/Ollama via
+  `OPENAI_BASE_URL`. Makes cattery work with zero downloads if you have an API key.
 - License compliance follow-through (#07) — artefacts-repo notices +
   release-packaging follow-up remain. Repo code is now Apache-2.0.
-- Server API audit (#10) + auth (#11) — before apps consume it
-- LLM proxy (#12) — unified AI backend
-- Vision: single-binary conversational system (STT → LLM → TTS) for indie builders
+- Server auth (#11) — after API redesign lands
+- LLM proxy (#12) — unified AI backend (`cattery think`), partly covered by #23
+- Vision: single-binary conversational system (STT → LLM → TTS) for indie builders on Pi4
 
 ## Key Decisions Made
 
@@ -131,6 +163,12 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
   carry `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`.
 - **License audit documented**: current third-party licensing and distribution obligations are recorded in `THIRD_PARTY_NOTICES.md`.
 - **STT model: Moonshine-tiny**: 27MB quantized ONNX, raw 16kHz PCM input (no mel spectrograms), 28x real-time on CPU, shares ORT instance with TTS. Community ONNX export from onnx-community/moonshine-tiny-ONNX. Weight license unclear — needs clarification before distribution.
+- **Multi-modal package naming**: CLI verbs = package names = API paths. `speak/` (TTS), `listen/` (STT), future `think/` (LLM), `see/` (vision). Each has an `Engine` interface + per-model subdirectories (e.g. `speak/kokoro/`, `listen/moonshine/`). The "cattery = place where cats live, verbs = cats" metaphor is for branding/website — code uses clean verbs.
+- **Pi4 viability confirmed**: TTS+STT hot = ~250MB RAM, 2-4s round-trip for voice message bot. Comfortable on Pi4 4GB.
+- **Zero system deps goal**: bundle espeak-ng binary + data in `~/.cattery/`, auto-download like ORT/models. No `apt install` needed.
+- **Remote models are just models**: no `--remote` flag. OpenAI engines are registered models (`openai-tts-1`, `openai-whisper-1`) selected via `--model`. Remote models only appear in `cattery list` when `OPENAI_API_KEY` is set. Default is always local — no accidental API spend. `OPENAI_BASE_URL` supports OpenRouter, Ollama, Azure. No SDK — pure `net/http`.
+- **Dual-mode operation**: local models (Pi4, offline, free) OR remote APIs (zero download, higher quality, paid). Same CLI, same server, same `speak.Engine`/`listen.Engine` interface.
+- **Numeric indices everywhere**: models and voices addressed by stable per-kind numeric index in CLI (`--voice 4 --model 1`). Slugs exist but are never required input. API responses always include both index and slug. Indices are 1-based, stable, never reassigned.
 - **Repo-local Codex workflow**: `.codex/skills/open` and `.codex/skills/close` are tracked in-repo, not globally. `open` should read `koder/STATE.md` first after restarts; `close` should sync `koder/STATE.md`, validate changed local skills, and commit a coherent session when explicitly invoked.
 
 ## Research
