@@ -111,6 +111,12 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 **Multi-modality restructure** — 6-issue chain to transform cattery from TTS-only
 to a multi-modal audio system (STT → LLM API → TTS conversational loop).
 
+### Orchestration
+
+Executing via **harnex Fire & Watch** (see `koder/workflows/harnex/dispatch.md`).
+Each issue runs through: `codex implements → claude reviews → codex fixes → merge`.
+One worktree per issue, merged to main before the next starts.
+
 ### Dependency chain
 
 ```
@@ -123,12 +129,14 @@ to a multi-modal audio system (STT → LLM API → TTS conversational loop).
 
 ### Execution order
 
-1. **#16** Extract ORT — foundation, pure refactor, no behavior change
-2. **#17** TTS interface — `speak/` + `speak/kokoro/`, delete `engine/`
-3. **#18** Registry redesign — multi-kind models, generalized download
-4. **#20** STT package — `listen/` + `listen/moonshine/`, from spike
-5. **#19** CLI redesign — `cattery speak`, `cattery listen`, updated list/status/download
-6. **#21** Server API — `/v1/speak`, `/v1/listen`, per-modality pools
+| Step | Issue | Status |
+|------|-------|--------|
+| 1 | **#16** Extract ORT — foundation, pure refactor | **ready** |
+| 2 | **#17** TTS interface — `speak/` + `speak/kokoro/` | blocked on #16 |
+| 3 | **#18** Registry redesign — multi-kind models | blocked on #16 |
+| 4 | **#20** STT package — `listen/` + `listen/moonshine/` | blocked on #18 |
+| 5 | **#19** CLI redesign — subcommand-per-modality | blocked on #17, #20 |
+| 6 | **#21** Server API — per-modality pools | blocked on #17, #18 |
 
 ### Also open
 
