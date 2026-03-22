@@ -1,4 +1,4 @@
-# Plan 27 — Bounded-Memory Streaming
+# Plan 27 — Bounded-Memory Streaming (architecture, non-implementing)
 
 ## Why
 
@@ -176,7 +176,19 @@
 - Parallel chunk synthesis / transcription.
 - Reworking server queueing, char budgets, or engine pool policy.
 
-## Work Plan
+## Implementation Split
+
+This plan is the architecture document. Implementation is split into three
+thin plans that can be executed independently (28 and 29 in parallel, 30 after
+both land):
+
+| Plan | Scope | Depends on | Work steps |
+|------|-------|------------|------------|
+| [28](plan_28_tts_streaming.md) | TTS: streaming WAV writer + Kokoro flush-per-chunk + countingWriter fix | — | 1-3 |
+| [29](plan_29_stt_streaming.md) | STT: streaming PCM decoder + streaming resampler + Moonshine sliding window + chunk planner refactor | — | 4-7 |
+| [30](plan_30_chunk_size_infra.md) | Chunk-size infra: RAM detection, lookup table, `--chunk-size` plumbing, clean errors, 512MB tier | 28, 29 | 8-12 |
+
+### Original work steps (reference)
 
 1. Add a streaming WAV writer to `audio/wav.go` with `WriteSamples(...)` /
    `Close()` semantics, a seekable header-patch path, and a temp-file fallback
