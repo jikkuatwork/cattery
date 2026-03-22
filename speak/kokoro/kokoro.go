@@ -150,20 +150,15 @@ func (e *Engine) Speak(w io.Writer, text string, opts speak.Options) error {
 		return fmt.Errorf("phonemize: %w", err)
 	}
 
-	tokens := tokenize(phonemes)
-	if len(tokens) == 0 {
+	chunks := chunkPhonemes(phonemes, chunkTokenLimit)
+	if len(chunks) == 0 {
 		return fmt.Errorf("no speakable content in text")
 	}
 
 	stylePath := result.Files[asset.File.Filename]
-	style, err := loadVoice(stylePath, len(tokens), styleDimFor(e.model))
+	samples, err := e.synthesizeChunks(stylePath, chunks, float32(speed))
 	if err != nil {
-		return fmt.Errorf("load voice: %w", err)
-	}
-
-	samples, err := e.synthesize(tokens, style, float32(speed))
-	if err != nil {
-		return fmt.Errorf("synthesize: %w", err)
+		return err
 	}
 
 	if err := audio.WriteWAV(w, samples, sampleRateFor(e.model)); err != nil {
@@ -224,6 +219,59 @@ func (e *Engine) synthesize(tokens []int64, style []float32, speed float32) ([]f
 	samples := make([]float32, len(src))
 	copy(samples, src)
 	return samples, nil
+}
+
+func (e *Engine) synthesizeChunks(stylePath string, chunks []string, speed float32) ([]float32, error) {
+	gap := make([]float32, silenceSamples(sampleRateFor(e.model), chunkGapMillis))
+
+	var combined []float32
+	wroteChunk := false
+
+	for i, chunk := range chunks {
+		tokens := tokenize(chunk)
+		if len(tokens) == 0 {
+			continue
+		}
+
+		samples, err := e.synthesizeChunk(stylePath, tokens, speed)
+		if err != nil {
+			return nil, fmt.Errorf("synthesize chunk %d: %w", i+1, err)
+		}
+
+		if wroteChunk && len(gap) > 0 {
+			combined = append(combined, gap...)
+		}
+		combined = append(combined, samples...)
+		wroteChunk = true
+	}
+
+	if !wroteChunk {
+		return nil, fmt.Errorf("no speakable content in text")
+	}
+
+	return combined, nil
+}
+
+func (e *Engine) synthesizeChunk(stylePath string, tokens []int64, speed float32) ([]float32, error) {
+	style, err := loadVoice(stylePath, len(tokens), styleDimFor(e.model))
+	if err != nil {
+		return nil, fmt.Errorf("load voice: %w", err)
+	}
+
+	samples, err := e.synthesize(tokens, style, speed)
+	if err != nil {
+		return nil, fmt.Errorf("synthesize: %w", err)
+	}
+
+	return samples, nil
+}
+
+func silenceSamples(sampleRate, gapMillis int) int {
+	if sampleRate <= 0 || gapMillis <= 0 {
+		return 0
+	}
+
+	return int(math.Round(float64(sampleRate) * float64(gapMillis) / 1000))
 }
 
 func tokenize(phonemes string) []int64 {
