@@ -23,7 +23,7 @@ For each plan:
 ### Phase 1: Implement
 
 ```bash
-harnex run codex --id cx-impl-NN --tmux cx-impl-NN \
+harnex run codex --id cx-impl-NN \
   --context "Implement koder/plans/plan_NN_slug.md. Follow the work plan steps in order. Run go build ./... and go vet ./... when done. Commit when complete."
 ```
 
@@ -32,7 +32,7 @@ Poll with `harnex pane` every 3-4 min. Wait for commit.
 ### Phase 2: Review
 
 ```bash
-harnex run claude --id cl-rev-NN --tmux cl-rev-NN \
+harnex run claude --id cl-rev-NN \
   --context "Review the implementation of koder/plans/plan_NN_slug.md. Read the plan, then read every changed file. Write a review to koder/reviews/NNN_slug/01_claude.md following the Implementation Review format (Completeness, Acceptance Criteria with evidence, Security, Code Quality, Verdict). Run go test ./... to verify tests pass. Commit the review file."
 ```
 
@@ -43,7 +43,7 @@ Poll every 4-5 min. Wait for review verdict.
 Only if review has P1 or P2 findings:
 
 ```bash
-harnex run codex --id cx-fix-NN --tmux cx-fix-NN \
+harnex run codex --id cx-fix-NN \
   --context "Fix the findings in koder/reviews/NNN_slug/01_claude.md. Address all P1 and P2 items. Run go build ./... go vet ./... go test ./... when done. Commit fixes."
 ```
 
@@ -93,11 +93,11 @@ Plan C: IMPLEMENT → REVIEW → FIX → VERIFY → ✓
 
 ## Naming
 
-| Phase | ID | tmux window |
-|-------|-----|-------------|
-| Implement | `cx-impl-NN` | `cx-impl-NN` |
-| Review | `cl-rev-NN` | `cl-rev-NN` |
-| Fix | `cx-fix-NN` | `cx-fix-NN` |
+| Phase | ID |
+|-------|-----|
+| Implement | `cx-impl-NN` |
+| Review | `cl-rev-NN` |
+| Fix | `cx-fix-NN` |
 
 ## Orchestrator Checklist
 

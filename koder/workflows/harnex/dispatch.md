@@ -32,7 +32,7 @@ git status
 
 # Launch from repo root
 cd /home/kodeman/Projects/cattery
-harnex run codex --id cx-impl-${ISSUE_NUM} --tmux cx-impl-${ISSUE_NUM} \
+harnex run codex --id cx-impl-${ISSUE_NUM} \
   --context "Implement koder/issues/${ISSUE_NUM}_*.md. Run go build ./... and go vet ./... when done. Commit when complete."
 ```
 
@@ -68,20 +68,20 @@ harnex stop --id cx-impl-16
 
 ## Naming Conventions
 
-| Step | ID pattern | tmux window | Example |
-|------|-----------|-------------|---------|
-| Implement | `cx-impl-NN` | `cx-impl-NN` | `cx-impl-16` |
-| Review | `cl-rev-NN` | `cl-rev-NN` | `cl-rev-16` |
-| Fix | `cx-fix-NN` | `cx-fix-NN` | `cx-fix-16` |
+| Step | ID pattern | Example |
+|------|-----------|---------|
+| Implement | `cx-impl-NN` | `cx-impl-16` |
+| Review | `cl-rev-NN` | `cl-rev-16` |
+| Fix | `cx-fix-NN` | `cx-fix-16` |
 
-**Rule**: Always use `--tmux <same-as-id>` so the tmux window name matches
-the session ID. Never use a different tmux name — it breaks `harnex pane`.
+Tmux window name defaults to the session ID. Use `--tmux-name` only if
+you need a different window title.
 
 ## Full Dispatch Lifecycle (Cattery Issue)
 
 ```
 1. Ensure main is clean
-2. harnex run codex --id cx-impl-NN --tmux cx-impl-NN (from repo root)
+2. harnex run codex --id cx-impl-NN (from repo root)
 3. Poll with harnex pane every 3-4 min
 4. When done: harnex stop, verify go build/vet pass
 5. Next issue
@@ -98,7 +98,7 @@ directly to main before starting the next:
 cd /home/kodeman/Projects/cattery
 
 # Issue #16: Extract ORT runtime (foundation, no deps)
-harnex run codex --id cx-impl-16 --tmux cx-impl-16 \
+harnex run codex --id cx-impl-16 \
   --context "Implement koder/issues/16_extract_ort_runtime.md. Run go build ./... and go vet ./... when done. Commit."
 # Watch → stop → next
 
@@ -116,7 +116,7 @@ parallel — they don't depend on the #16-#21 chain.
 
 - **Never** launch agents with raw `tmux send-keys` or `tmux new-window`
 - **Never** use `c-zai-dangerous` or `claude` directly in tmux
-- **Never** use `--tmux NAME` where NAME differs from `--id`
+- **Never** use `--tmux-name NAME` where NAME differs from `--id` (rarely needed)
 - **Never** poll with raw `tmux capture-pane` — use `harnex pane`
 - **Never** rely on `--wait-for-idle` alone — always use Fire & Watch
 - **Never** create worktrees or feature branches — work directly on main

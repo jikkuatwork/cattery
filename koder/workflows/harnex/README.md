@@ -91,9 +91,9 @@ Default inbox TTL: 120 seconds (configurable via `--inbox-ttl`).
 ### `harnex run <cli>` — Start a wrapped session
 
 ```bash
-harnex run codex --id worker --tmux
-harnex run claude --id reviewer --tmux cl-rv
-harnex run codex --id impl-1 --tmux cx-p1 \
+harnex run codex --id worker
+harnex run claude --id reviewer
+harnex run codex --id impl-1 \
   --context "Implement the plan. Commit when done." \
   -- --cd ~/repo/worktree
 ```
@@ -102,8 +102,9 @@ harnex run codex --id impl-1 --tmux cx-p1 \
 |------|-------------|
 | `--id ID` | Session name (default: random two-word) |
 | `--description TEXT` | Short description stored in registry |
-| `--tmux [NAME]` | Run in tmux window (implies detach) |
-| `--detach` | Background, return JSON on stdout |
+| `--no-tmux` | Run in current terminal (foreground) |
+| `--detach` | Headless background (implies --no-tmux) |
+| `--tmux-name NAME` | Custom tmux window name |
 | `--context TEXT` | Initial prompt (session ID auto-prepended) |
 | `--watch PATH` | Inject `file-change-hook` on file change |
 | `--host HOST` | Bind host (default: 127.0.0.1) |
@@ -112,8 +113,7 @@ harnex run codex --id impl-1 --tmux cx-p1 \
 | `--inbox-ttl SECS` | Expire queued messages after N seconds (default: 120) |
 | `-- [args...]` | Pass remaining args to the wrapped CLI |
 
-**Tmux is the recommended mode** for multi-agent work. Switch between
-windows with `Ctrl-b n/p/w`.
+**Tmux is the default mode.** Switch between windows with `Ctrl-b n/p/w`.
 
 ### `harnex send --id ID` — Inject a message
 
@@ -337,13 +337,16 @@ harnex send --id cx-1 --message "implement the plan" \
   --wait-for-idle --timeout 600
 ```
 
-### Always use `--tmux` for interactive work
+### Tmux is the default
 
 ```bash
-# Preferred
-harnex run codex --id worker --tmux
+# Default: tmux window
+harnex run codex --id worker
 
-# Only for headless/automated workflows
+# Foreground (blocks terminal)
+harnex run codex --id worker --no-tmux
+
+# Headless/automated
 harnex run codex --id worker --detach
 ```
 
