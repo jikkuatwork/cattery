@@ -5,19 +5,19 @@ streaming. All numbers are from cold-start runs (no engine pre-warming).
 
 ## Quick Reference
 
-| Metric | Value |
-|---|---|
-| Binary size | 11 MB |
-| First-run download | ~150 MB (ORT + model + voices) |
-| Server idle RSS | **7 MB** |
-| Cold start (first TTS) | ~3.5s |
-| Short TTS (4s audio) | 235 MB peak, 1.6x RTF |
-| Long TTS (161s audio, file) | 675 MB peak, 0.75x RTF |
-| Long TTS (--chunk-size 15s) | 678 MB peak, 0.93x RTF |
-| Long TTS (pipe/stdout) | 840 MB peak, 0.63x RTF |
-| Short STT (4s audio) | 180 MB peak, 0.20x RTF |
-| Long STT (161s audio) | 575 MB peak, 0.12x RTF |
-| Long STT (--chunk-size 15s) | **228 MB peak**, 0.07x RTF |
+ | Metric                      | Value                          |
+ | ---                         | ---                            |
+ | Binary size                 | 11 MB                          |
+ | First-run download          | ~150 MB (ORT + model + voices) |
+ | Server idle RSS             | **7 MB**                       |
+ | Cold start (first TTS)      | ~3.5s                          |
+ | Short TTS (4s audio)        | 235 MB peak, 1.6x RTF          |
+ | Long TTS (161s audio, file) | 675 MB peak, 0.75x RTF         |
+ | Long TTS (--chunk-size 15s) | 678 MB peak, 0.93x RTF         |
+ | Long TTS (pipe/stdout)      | 840 MB peak, 0.63x RTF         |
+ | Short STT (4s audio)        | 180 MB peak, 0.20x RTF         |
+ | Long STT (161s audio)       | 575 MB peak, 0.12x RTF         |
+ | Long STT (--chunk-size 15s) | **228 MB peak**, 0.07x RTF     |
 
 RTF = real-time factor. Below 1.0 means faster than real-time.
 
@@ -72,15 +72,15 @@ RSS drops to ~50 MB after `malloc_trim` reclaims the C heap.
 Available RAM is read from `/proc/meminfo` (Linux) or defaults to unknown on
 other platforms. The auto-selected chunk size is:
 
-| Available RAM | Chunk size | Notes |
-|---|---|---|
-| ≤ 512 MB | 10s | Warns on stderr, proceeds normally |
-| ≤ 1 GB | 15s | $6 VPS floor |
-| ≤ 2 GB | 20s | |
-| ≤ 4 GB | 30s | Pi4 4GB default |
-| ≤ 8 GB | 45s | |
-| > 8 GB | 60s | Fewer boundary artifacts |
-| Unknown | 30s | macOS, Windows/WSL fallback |
+ | Available RAM | Chunk size | Notes                              |
+ | ---           | ---        | ---                                |
+ | ≤ 512 MB      | 10s        | Warns on stderr, proceeds normally |
+ | ≤ 1 GB        | 15s        | $6 VPS floor                       |
+ | ≤ 2 GB        | 20s        |                                    |
+ | ≤ 4 GB        | 30s        | Pi4 4GB default                    |
+ | ≤ 8 GB        | 45s        |                                    |
+ | > 8 GB        | 60s        | Fewer boundary artifacts           |
+ | Unknown       | 30s        | macOS, Windows/WSL fallback        |
 
 Override with `--chunk-size 15s` or `CATTERY_CHUNK_SIZE=15`.
 
@@ -88,13 +88,13 @@ Override with `--chunk-size 15s` or `CATTERY_CHUNK_SIZE=15`.
 
 ### Raspberry Pi 4 (4GB, Cortex-A72 quad-core)
 
-| Metric | TTS | STT |
-|---|---|---|
-| Estimated peak RSS | ~350 MB | ~200 MB |
-| Auto chunk size | 30s | 30s |
-| Estimated RTF | 2-4x | 0.3-0.5x |
-| 3-min clip | ~6-12 min | ~1.5-2.5 min |
-| Comfortable? | Yes (hot) | Yes |
+ | Metric             | TTS       | STT          |
+ | ---                | ---       | ---          |
+ | Estimated peak RSS | ~350 MB   | ~200 MB      |
+ | Auto chunk size    | 30s       | 30s          |
+ | Estimated RTF      | 2-4x      | 0.3-0.5x     |
+ | 3-min clip         | ~6-12 min | ~1.5-2.5 min |
+ | Comfortable?       | Yes (hot) | Yes          |
 
 TTS is slower than real-time but completes without OOM. STT is still faster
 than real-time even on Pi4. Both fit comfortably in 4GB with room for OS +
@@ -105,13 +105,13 @@ hot engines. Viable for Telegram bots and local assistants.
 
 ### $6 VPS (1GB RAM, 1 vCPU)
 
-| Metric | TTS | STT |
-|---|---|---|
-| Auto chunk size | 15s | 15s |
-| Estimated peak RSS | ~300 MB | ~230 MB |
-| Estimated RTF | 3-6x | 0.5-1.0x |
-| 1-min clip | ~3-6 min | ~30-60s |
-| 3-min clip | Tight, may swap | ~1.5-3 min |
+ | Metric             | TTS             | STT        |
+ | ---                | ---             | ---        |
+ | Auto chunk size    | 15s             | 15s        |
+ | Estimated peak RSS | ~300 MB         | ~230 MB    |
+ | Estimated RTF      | 3-6x            | 0.5-1.0x   |
+ | 1-min clip         | ~3-6 min        | ~30-60s    |
+ | 3-min clip         | Tight, may swap | ~1.5-3 min |
 
 STT works well. TTS is marginal — 1-min clips are fine, 3-min clips will
 likely trigger swap. Use `--chunk-size 10s` to reduce peak RSS at the cost
@@ -131,18 +131,18 @@ Both models load (~180-190 MB base) but inference headroom is very tight.
 
 ### Fully Supported
 
-| Platform | Memory detect | Notes |
-|---|---|---|
-| **Linux x86_64** | /proc/meminfo | Primary platform |
-| **Linux arm64** | /proc/meminfo | Pi4, ARM VPS |
-| **WSL** | /proc/meminfo | Behaves as Linux |
+ | Platform         | Memory detect | Notes            |
+ | ---              | ---           | ---              |
+ | **Linux x86_64** | /proc/meminfo | Primary platform |
+ | **Linux arm64**  | /proc/meminfo | Pi4, ARM VPS     |
+ | **WSL**          | /proc/meminfo | Behaves as Linux |
 
 ### Partial Support
 
-| Platform | Memory detect | Gap |
-|---|---|---|
-| **macOS x86_64** | Defaults to 30s | No sysctl probe yet |
-| **macOS arm64** | Defaults to 30s | No sysctl probe yet |
+ | Platform         | Memory detect   | Gap                 |
+ | ---              | ---             | ---                 |
+ | **macOS x86_64** | Defaults to 30s | No sysctl probe yet |
+ | **macOS arm64**  | Defaults to 30s | No sysctl probe yet |
 
 macOS compiles and runs. ORT downloads work for both architectures. The only
 gap is memory auto-detection — chunk size defaults to 30s instead of adapting.
@@ -151,10 +151,10 @@ allocator) but harmless.
 
 ### Not Yet Supported
 
-| Platform | Blocker |
-|---|---|
-| **Windows native** | `ort/ort.go` imports `golang.org/x/sys/unix` unconditionally |
-| **Windows WSL** | Works (treated as Linux) |
+ | Platform           | Blocker                                                      |
+ | ---                | ---                                                          |
+ | **Windows native** | `ort/ort.go` imports `golang.org/x/sys/unix` unconditionally |
+ | **Windows WSL**    | Works (treated as Linux)                                     |
 
 Windows native needs build tags to split the Unix-specific ORT stderr redirect
 and `malloc_trim` call. The download infrastructure already recognizes
@@ -162,11 +162,11 @@ and `malloc_trim` call. The download infrastructure already recognizes
 
 ### System Dependencies
 
-| Dependency | Required | Bundled |
-|---|---|---|
-| espeak-ng | Yes (TTS only) | No — `apt install espeak-ng` or `brew install espeak` |
-| ONNX Runtime | Yes | Auto-downloaded to ~/.cattery/ |
-| Model files | Yes | Auto-downloaded to ~/.cattery/ |
+ | Dependency   | Required       | Bundled                                               |
+ | ---          | ---            | ---                                                   |
+ | espeak-ng    | Yes (TTS only) | No — `apt install espeak-ng` or `brew install espeak` |
+ | ONNX Runtime | Yes            | Auto-downloaded to ~/.cattery/                        |
+ | Model files  | Yes            | Auto-downloaded to ~/.cattery/                        |
 
 Issue #22 tracks bundling espeak-ng to achieve zero system dependencies.
 
