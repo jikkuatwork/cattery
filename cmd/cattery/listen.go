@@ -11,15 +11,17 @@ import (
 	"github.com/jikkuatwork/cattery/listen/moonshine"
 	"github.com/jikkuatwork/cattery/ort"
 	"github.com/jikkuatwork/cattery/paths"
+	"github.com/jikkuatwork/cattery/preflight"
 	"github.com/jikkuatwork/cattery/registry"
 )
 
 func cmdListen(args []string) error {
 	var (
-		inputPath  string
-		outputPath string
-		lang       string
-		modelRef   string
+		inputPath     string
+		outputPath    string
+		lang          string
+		modelRef      string
+		chunkSizeFlag string
 	)
 
 	for i := 0; i < len(args); i++ {
@@ -39,6 +41,12 @@ func cmdListen(args []string) error {
 			if i < len(args) {
 				modelRef = args[i]
 			}
+		case "--chunk-size":
+			i++
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --chunk-size")
+			}
+			chunkSizeFlag = args[i]
 		default:
 			if strings.HasPrefix(args[i], "--") {
 				return fmt.Errorf("unknown flag: %s\nRun 'cattery help' for usage", args[i])
@@ -56,6 +64,11 @@ func cmdListen(args []string) error {
 	}
 	if model.Location != registry.Local {
 		return fmt.Errorf("remote STT model %q is not supported yet", model.ID)
+	}
+
+	chunkSize, err := resolveCommandChunkSize(chunkSizeFlag, os.Stderr)
+	if err != nil {
+		return err
 	}
 
 	input, inputName, err := openAudioInput(inputPath, "cattery listen <audio.wav>")
@@ -87,7 +100,15 @@ func cmdListen(args []string) error {
 	}
 	defer eng.Close()
 
-	result, err := eng.Transcribe(input, listen.Options{Lang: lang})
+	var result *listen.Result
+	err = preflight.GuardMemoryError("transcription", func() error {
+		var innerErr error
+		result, innerErr = eng.Transcribe(input, listen.Options{
+			Lang:      lang,
+			ChunkSize: chunkSize,
+		})
+		return innerErr
+	})
 	if err != nil {
 		return err
 	}

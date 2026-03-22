@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/jikkuatwork/cattery/audio"
 )
@@ -111,6 +112,40 @@ func TestTranscribeStreamSkipsPureSilence(t *testing.T) {
 	}
 	if math.Abs(result.Duration-65.0) > 1e-6 {
 		t.Fatalf("Duration = %v, want 65", result.Duration)
+	}
+}
+
+func TestTranscribeStreamWithChunkSizeUsesConfiguredTarget(t *testing.T) {
+	samples := constantPCM(25, 0.2)
+
+	var chunkLens []int
+	result, err := transcribeStreamWithChunkSize(
+		bytes.NewReader(rawPCMTestBytes(samples)),
+		defaultSampleRate,
+		10*time.Second,
+		func(chunk []float32) (string, error) {
+			chunkLens = append(chunkLens, len(chunk))
+			return "hello", nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("transcribeStreamWithChunkSize() error = %v", err)
+	}
+
+	if len(chunkLens) != 3 {
+		t.Fatalf("len(chunkLens) = %d, want 3", len(chunkLens))
+	}
+	if chunkLens[0] != secondsToSamples(defaultSampleRate, 10) {
+		t.Fatalf("first chunk len = %d", chunkLens[0])
+	}
+	if chunkLens[1] != secondsToSamples(defaultSampleRate, 10) {
+		t.Fatalf("second chunk len = %d", chunkLens[1])
+	}
+	if chunkLens[2] != secondsToSamples(defaultSampleRate, 6) {
+		t.Fatalf("final chunk len = %d", chunkLens[2])
+	}
+	if math.Abs(result.Duration-25.0) > 1e-6 {
+		t.Fatalf("Duration = %v, want 25", result.Duration)
 	}
 }
 

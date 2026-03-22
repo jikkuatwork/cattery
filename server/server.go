@@ -48,6 +48,7 @@ type Config struct {
 	KeepAlive     bool
 	SpeakModel    int
 	ListenModel   int
+	ChunkSize     time.Duration
 }
 
 // Server is the cattery HTTP server.
@@ -210,6 +211,11 @@ func New(cfg Config) (*Server, error) {
 		}
 		cfg.ListenModel = model.Index
 	}
+	resolvedChunkSize, err := resolveServerChunkSizeFromEnv(cfg.ChunkSize, os.Stderr)
+	if err != nil {
+		return nil, err
+	}
+	cfg.ChunkSize = resolvedChunkSize
 
 	speakModel := registry.GetByIndex(registry.KindTTS, cfg.SpeakModel)
 	if speakModel == nil {
@@ -416,13 +422,6 @@ func (s *Server) handleSpeak(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.releaseChars(textLen)
 
-	if err := preflight.CheckAvailableMemory(0); err != nil {
-		s.failed.Add(1)
-		w.Header().Set("Retry-After", "30")
-		writeError(w, http.StatusServiceUnavailable, err.Error())
-		return
-	}
-
 	wavBuf, meta, err := s.synthesize(r.Context(), req, model, voice)
 	if err != nil {
 		if errors.Is(err, ErrQueueFull) {
@@ -435,6 +434,11 @@ func (s *Server) handleSpeak(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.failed.Add(1)
+		if preflight.IsMemoryError(err) {
+			w.Header().Set("Retry-After", "30")
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
 		log.Printf("speak error: %v", err)
 		writeError(w, http.StatusInternalServerError, "synthesis failed")
 		return
@@ -644,13 +648,19 @@ func (s *Server) synthesize(
 
 	t0 := time.Now()
 	var buf bytes.Buffer
-	err = eng.Speak(&buf, req.Text, speak.Options{
-		Voice:  voice.ID,
-		Gender: req.Gender,
-		Speed:  req.Speed,
-		Lang:   req.Lang,
+	err = preflight.GuardMemoryError("speech synthesis", func() error {
+		return eng.Speak(&buf, req.Text, speak.Options{
+			Voice:     voice.ID,
+			Gender:    req.Gender,
+			Speed:     req.Speed,
+			Lang:      req.Lang,
+			ChunkSize: s.cfg.ChunkSize,
+		})
 	})
 	if err != nil {
+		if preflight.IsMemoryError(err) {
+			return nil, nil, err
+		}
 		return nil, nil, fmt.Errorf("synthesize: %w", err)
 	}
 

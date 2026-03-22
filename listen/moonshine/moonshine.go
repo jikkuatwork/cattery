@@ -110,7 +110,7 @@ func (e *Engine) Transcribe(r io.Reader, opts listen.Options) (*listen.Result, e
 		// Moonshine-tiny is English-only. Ignore the hint for now.
 	}
 
-	return transcribeStream(r, e.sampleRate, e.transcribePCM)
+	return transcribeStreamWithChunkSize(r, e.sampleRate, opts.ChunkSize, e.transcribePCM)
 }
 
 func (e *Engine) transcribePCM(samples []float32) (string, error) {
@@ -214,10 +214,20 @@ func transcribeStream(
 	sampleRate int,
 	transcribe func([]float32) (string, error),
 ) (*listen.Result, error) {
+	return transcribeStreamWithChunkSize(r, sampleRate, 0, transcribe)
+}
+
+func transcribeStreamWithChunkSize(
+	r io.Reader,
+	sampleRate int,
+	chunkSize time.Duration,
+	transcribe func([]float32) (string, error),
+) (*listen.Result, error) {
 	if transcribe == nil {
 		return nil, fmt.Errorf("missing chunk transcriber")
 	}
 
+	chunkSize = normalizeChunkTarget(chunkSize)
 	stream, err := audio.NewPCMStreamReader(r, sampleRate)
 	if err != nil {
 		return nil, fmt.Errorf("read audio: %w", err)
@@ -239,7 +249,7 @@ func transcribeStream(
 	readBlock := maxInt(1, secondsToSamples(sourceRate, 1.0))
 	windowCap := secondsToSamples(
 		sampleRate,
-		chunkTargetSeconds+chunkSearchWindowSeconds+chunkOverlapSeconds+1.0,
+		chunkSize.Seconds()+chunkSearchWindowSeconds+chunkOverlapSeconds+1.0,
 	)
 	window := make([]float32, 0, maxInt(1, windowCap))
 	texts := make([]string, 0, 4)
@@ -251,7 +261,7 @@ func transcribeStream(
 	start := time.Now()
 
 	for {
-		plan := planNextChunk(window, sampleRate, eof)
+		plan := planNextChunkWithTarget(window, sampleRate, chunkSize, eof)
 		if plan.needMore {
 			block, readErr := stream.ReadSamples(readBlock)
 			if readErr == io.EOF {

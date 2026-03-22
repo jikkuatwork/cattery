@@ -7,7 +7,6 @@ package preflight
 import (
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 
 	"github.com/jikkuatwork/cattery/paths"
@@ -48,7 +47,7 @@ func Check(minMemMB int) *Status {
 	s := &Status{OK: true}
 
 	// 1. Available memory
-	availMB := availableMemoryMB()
+	availMB := AvailableMemoryMB()
 	if availMB >= 0 && availMB < minMemMB {
 		s.OK = false
 		s.addError(fmt.Sprintf("insufficient memory: %d MB available, need %d MB", availMB, minMemMB))
@@ -91,37 +90,11 @@ func CheckAvailableMemory(minMemMB int) error {
 	if minMemMB <= 0 {
 		minMemMB = MinMemoryMB
 	}
-	availMB := availableMemoryMB()
+	availMB := AvailableMemoryMB()
 	if availMB >= 0 && availMB < minMemMB {
 		return fmt.Errorf("cattery: insufficient memory: %d MB available, need %d MB", availMB, minMemMB)
 	}
 	return nil
-}
-
-// availableMemoryMB returns available system memory in MB, or -1 if unknown.
-func availableMemoryMB() int {
-	switch runtime.GOOS {
-	case "linux":
-		return linuxAvailableMemoryMB()
-	default:
-		return -1 // unknown platform, skip check
-	}
-}
-
-// linuxAvailableMemoryMB reads MemAvailable from /proc/meminfo.
-func linuxAvailableMemoryMB() int {
-	data, err := os.ReadFile("/proc/meminfo")
-	if err != nil {
-		return -1
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "MemAvailable:") {
-			var kb int
-			fmt.Sscanf(line, "MemAvailable: %d kB", &kb)
-			return kb / 1024
-		}
-	}
-	return -1
 }
 
 // ortLibExists checks if any ORT shared library is present in the directory.

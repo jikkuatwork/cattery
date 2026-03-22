@@ -1,6 +1,9 @@
 package speak
 
-import "io"
+import (
+	"io"
+	"time"
+)
 
 // Engine synthesizes speech from text.
 type Engine interface {
@@ -16,10 +19,11 @@ type Engine interface {
 
 // Options controls synthesis parameters.
 type Options struct {
-	Voice  string  // voice name/ID (empty = engine default)
-	Gender string  // "male"/"female" filter (empty = any)
-	Lang   string  // language (empty = engine default, usually "en-us")
-	Speed  float64 // 0.5-2.0 (0 = default 1.0)
+	Voice     string        // voice name/ID (empty = engine default)
+	Gender    string        // "male"/"female" filter (empty = any)
+	Lang      string        // language (empty = engine default, usually "en-us")
+	Speed     float64       // 0.5-2.0 (0 = default 1.0)
+	ChunkSize time.Duration // streaming chunk target where supported; Kokoro ignores it for now
 }
 
 // Voice describes an available voice.

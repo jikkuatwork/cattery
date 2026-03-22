@@ -1,6 +1,9 @@
 package listen
 
-import "io"
+import (
+	"io"
+	"time"
+)
 
 // Engine transcribes audio to text.
 type Engine interface {
@@ -16,7 +19,8 @@ type Engine interface {
 
 // Options controls transcription parameters.
 type Options struct {
-	Lang string // language hint
+	Lang      string        // language hint
+	ChunkSize time.Duration // target streaming window size
 }
 
 // Result holds transcription output.

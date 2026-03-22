@@ -133,6 +133,8 @@ func (e *Engine) Speak(w io.Writer, text string, opts speak.Options) (err error)
 	if lang == "" {
 		lang = defaultLang
 	}
+	// Kokoro still chunks by token budget, not duration. ChunkSize is reserved
+	// for interface symmetry and future engines.
 
 	voice, asset, err := resolveVoice(e.model, opts.Voice, opts.Gender)
 	if err != nil {

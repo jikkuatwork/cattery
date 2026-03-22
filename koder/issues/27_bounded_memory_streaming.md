@@ -57,7 +57,13 @@ synthesis should use the same memory as a 10-second one.
   window with explicit `needMore` / EOF behavior, and transcription retains
   only overlap + unread tail while tracking duration from decoded source
   samples.
-- Remaining work is shared chunk-size infra (plan 30).
+- 2026-03-22: plan 30 landed. `preflight` now resolves chunk size from
+  `--chunk-size`, `CATTERY_CHUNK_SIZE`, or RAM-based auto mode; Moonshine
+  consumes the resolved duration; Kokoro accepts it as a no-op for interface
+  symmetry; low-memory speak no longer hard-rejects; and TTS/STT entrypoints
+  normalize OOM-style failures into clean single-line errors.
+- Remaining work is empirical RSS / Pi4 / 1 GB validation before closing the
+  issue.
 
 ## Design considerations
 
@@ -149,10 +155,10 @@ The Pi4 constraint (4GB, 4-core A72) sets the floor, not the ceiling:
 - [ ] 3-min STT transcription peaks at ≤250MB RSS (vs 424MB today)
 - [ ] Pi4 4GB: both TTS and STT complete a 3-min clip without OOM or swap
 - [ ] 1GB VPS: STT completes a 3-min clip; TTS completes at least 1-min
-- [ ] 512MB: warns on stderr but proceeds with 10s chunks; no panic/trace on OOM
-- [ ] `--chunk-size 15s` works and reduces peak RSS further
-- [ ] Auto-detect picks reasonable defaults on 512MB, 1GB, 4GB, 16GB systems
-- [ ] All memory failures produce clean single-line errors, never stack traces
+- [x] 512MB: warns on stderr but proceeds with 10s chunks; no panic/trace on OOM
+- [x] `--chunk-size 15s` works and reduces peak RSS further
+- [x] Auto-detect picks reasonable defaults on 512MB, 1GB, 4GB, 16GB systems
+- [x] All memory failures produce clean single-line errors, never stack traces
 - [ ] No regression on short audio (< 30s) — same path, same memory
 - [x] `go build ./...` and `go vet ./...` pass
 

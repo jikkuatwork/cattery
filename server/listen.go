@@ -11,6 +11,7 @@ import (
 	"github.com/jikkuatwork/cattery/listen"
 	"github.com/jikkuatwork/cattery/listen/moonshine"
 	"github.com/jikkuatwork/cattery/paths"
+	"github.com/jikkuatwork/cattery/preflight"
 	"github.com/jikkuatwork/cattery/registry"
 )
 
@@ -54,11 +55,22 @@ func (s *Server) handleListen(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.listenPool.Return(eng)
 
-	result, err := eng.Transcribe(r.Body, listen.Options{
-		Lang: strings.TrimSpace(r.URL.Query().Get("lang")),
+	var result *listen.Result
+	err = preflight.GuardMemoryError("transcription", func() error {
+		var innerErr error
+		result, innerErr = eng.Transcribe(r.Body, listen.Options{
+			Lang:      strings.TrimSpace(r.URL.Query().Get("lang")),
+			ChunkSize: s.cfg.ChunkSize,
+		})
+		return innerErr
 	})
 	if err != nil {
 		s.failed.Add(1)
+		if preflight.IsMemoryError(err) {
+			w.Header().Set("Retry-After", "30")
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 	"unicode"
 )
 
 const (
+	defaultChunkTarget       = 30 * time.Second
 	chunkTargetSeconds       = 30.0
 	chunkSearchWindowSeconds = 3.0
 	chunkOverlapSeconds      = 0.5
@@ -36,13 +38,17 @@ type chunkPlan struct {
 }
 
 func planAudioChunks(samples []float32, sampleRate int) []sampleRange {
+	return planAudioChunksWithTarget(samples, sampleRate, 0)
+}
+
+func planAudioChunksWithTarget(samples []float32, sampleRate int, target time.Duration) []sampleRange {
 	if len(samples) == 0 || sampleRate <= 0 {
 		return nil
 	}
 
 	var chunks []sampleRange
 	for offset := 0; offset < len(samples); {
-		plan := planNextChunk(samples[offset:], sampleRate, true)
+		plan := planNextChunkWithTarget(samples[offset:], sampleRate, target, true)
 		if plan.chunk.end <= plan.chunk.start {
 			break
 		}
@@ -59,31 +65,42 @@ func planAudioChunks(samples []float32, sampleRate int) []sampleRange {
 }
 
 func planNextChunk(samples []float32, sampleRate int, atEOF bool) chunkPlan {
-	return planNextChunkWithThreshold(samples, sampleRate, silenceFloorFor(samples), atEOF)
+	return planNextChunkWithTarget(samples, sampleRate, 0, atEOF)
+}
+
+func planNextChunkWithTarget(
+	samples []float32,
+	sampleRate int,
+	target time.Duration,
+	atEOF bool,
+) chunkPlan {
+	return planNextChunkWithThreshold(samples, sampleRate, silenceFloorFor(samples), target, atEOF)
 }
 
 func planNextChunkWithThreshold(
 	samples []float32,
 	sampleRate int,
 	threshold float64,
+	target time.Duration,
 	atEOF bool,
 ) chunkPlan {
 	if len(samples) == 0 || sampleRate <= 0 {
 		return chunkPlan{threshold: threshold, needMore: !atEOF}
 	}
 
+	target = normalizeChunkTarget(target)
 	search := secondsToSamples(sampleRate, chunkSearchWindowSeconds)
-	target := secondsToSamples(sampleRate, chunkTargetSeconds)
+	targetSamples := secondsToSamples(sampleRate, target.Seconds())
 	overlap := secondsToSamples(sampleRate, chunkOverlapSeconds)
 
-	if !atEOF && len(samples) < target+search {
+	if !atEOF && len(samples) < targetSamples+search {
 		return chunkPlan{
 			threshold: threshold,
 			needMore:  true,
 		}
 	}
 
-	if len(samples) <= target {
+	if len(samples) <= targetSamples {
 		return chunkPlan{
 			chunk:     sampleRange{start: 0, end: len(samples)},
 			nextStart: len(samples),
@@ -92,12 +109,12 @@ func planNextChunkWithThreshold(
 		}
 	}
 
-	cut := target
+	cut := targetSamples
 	searchSpan := sampleRange{
-		start: maxInt(target-search, 0),
-		end:   minInt(target+search, len(samples)),
+		start: maxInt(targetSamples-search, 0),
+		end:   minInt(targetSamples+search, len(samples)),
 	}
-	if nearest, ok := nearestSilenceCut(target, searchSpan, findSilentRuns(samples, sampleRate, threshold)); ok {
+	if nearest, ok := nearestSilenceCut(targetSamples, searchSpan, findSilentRuns(samples, sampleRate, threshold)); ok {
 		cut = nearest
 	}
 	if cut <= 0 {
@@ -122,6 +139,15 @@ func transcribeChunkedPCM(
 	sampleRate int,
 	transcribe func([]float32) (string, error),
 ) (string, error) {
+	return transcribeChunkedPCMWithTarget(samples, sampleRate, 0, transcribe)
+}
+
+func transcribeChunkedPCMWithTarget(
+	samples []float32,
+	sampleRate int,
+	target time.Duration,
+	transcribe func([]float32) (string, error),
+) (string, error) {
 	if len(samples) == 0 {
 		return "", nil
 	}
@@ -132,14 +158,14 @@ func transcribeChunkedPCM(
 
 	estChunks := 2
 	if sampleRate > 0 {
-		target := secondsToSamples(sampleRate, chunkTargetSeconds)
-		if target > 0 {
-			estChunks = len(samples)/target + 2
+		targetSamples := secondsToSamples(sampleRate, normalizeChunkTarget(target).Seconds())
+		if targetSamples > 0 {
+			estChunks = len(samples)/targetSamples + 2
 		}
 	}
 	texts := make([]string, 0, estChunks)
 	for offset, chunkIndex := 0, 0; offset < len(samples); {
-		plan := planNextChunk(samples[offset:], sampleRate, true)
+		plan := planNextChunkWithTarget(samples[offset:], sampleRate, target, true)
 		if plan.chunk.end <= plan.chunk.start {
 			break
 		}
@@ -170,6 +196,13 @@ func transcribeChunkedPCM(
 	}
 
 	return stitchChunkTexts(texts), nil
+}
+
+func normalizeChunkTarget(target time.Duration) time.Duration {
+	if target <= 0 {
+		return defaultChunkTarget
+	}
+	return target
 }
 
 func stitchChunkTexts(texts []string) string {

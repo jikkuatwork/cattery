@@ -21,6 +21,7 @@ import (
 	"github.com/jikkuatwork/cattery/ort"
 	"github.com/jikkuatwork/cattery/paths"
 	"github.com/jikkuatwork/cattery/phonemize"
+	"github.com/jikkuatwork/cattery/preflight"
 	"github.com/jikkuatwork/cattery/registry"
 	"github.com/jikkuatwork/cattery/server"
 	"github.com/jikkuatwork/cattery/speak"
@@ -86,6 +87,7 @@ func cmdServe(args []string) error {
 		ListenWorkers: 1,
 	}
 	var idleSec int
+	var chunkSizeFlag string
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -122,6 +124,12 @@ func cmdServe(args []string) error {
 			}
 		case "--keep-alive":
 			cfg.KeepAlive = true
+		case "--chunk-size":
+			i++
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --chunk-size")
+			}
+			chunkSizeFlag = args[i]
 		case "--model", "--speak-model":
 			i++
 			if i < len(args) {
@@ -142,11 +150,17 @@ func cmdServe(args []string) error {
 			}
 		default:
 			return fmt.Errorf(
-				"unknown flag %q for serve\nUsage: cattery serve [--port 7100] [--speak-workers 1] [--listen-workers 1]",
+				"unknown flag %q for serve\nUsage: cattery serve [--port 7100] [--speak-workers 1] [--listen-workers 1] [--chunk-size 30s]",
 				args[i],
 			)
 		}
 	}
+
+	chunkSize, err := resolveCommandChunkSize(chunkSizeFlag, os.Stderr)
+	if err != nil {
+		return err
+	}
+	cfg.ChunkSize = chunkSize
 
 	srv, err := server.New(cfg)
 	if err != nil {
@@ -166,6 +180,7 @@ func cmdSpeak(args []string) error {
 	var outputPath string
 	lang := "en-us"
 	var modelRef string
+	var chunkSizeFlag string
 	var textParts []string
 
 	for i := 0; i < len(args); i++ {
@@ -199,6 +214,12 @@ func cmdSpeak(args []string) error {
 			if i < len(args) {
 				modelRef = args[i]
 			}
+		case "--chunk-size":
+			i++
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --chunk-size")
+			}
+			chunkSizeFlag = args[i]
 		default:
 			if strings.HasPrefix(args[i], "--") {
 				return fmt.Errorf("unknown flag: %s\nRun 'cattery help' for usage", args[i])
@@ -232,6 +253,11 @@ func cmdSpeak(args []string) error {
 		return fmt.Errorf("espeak-ng not found\n\nInstall it:\n  Linux:  sudo apt install espeak-ng\n  macOS:  brew install espeak-ng")
 	}
 
+	chunkSize, err := resolveCommandChunkSize(chunkSizeFlag, os.Stderr)
+	if err != nil {
+		return err
+	}
+
 	dataDir := paths.DataDir()
 	files, err := download.Ensure(dataDir, model)
 	if err != nil {
@@ -263,10 +289,13 @@ func cmdSpeak(args []string) error {
 	counted := &countingWriter{writer: output.writer}
 
 	t0 := time.Now()
-	if err := eng.Speak(counted, text, speak.Options{
-		Voice: voiceInfo.ID,
-		Lang:  lang,
-		Speed: speed,
+	if err := preflight.GuardMemoryError("speech synthesis", func() error {
+		return eng.Speak(counted, text, speak.Options{
+			Voice:     voiceInfo.ID,
+			Lang:      lang,
+			Speed:     speed,
+			ChunkSize: chunkSize,
+		})
 	}); err != nil {
 		return err
 	}
@@ -517,12 +546,14 @@ Speak flags:
   --female         Pick a random female voice
   --male           Pick a random male voice
   --speed FLOAT    Speech speed, 0.5-2.0 (default: 1.0)
+  --chunk-size DUR Chunk size override, 10s-60s (bare ints = seconds)
   --output, -o     Output WAV file (default: output.wav or stdout if piped)
   --lang LANG      Phonemizer language (default: en-us)
   --model REF      TTS model index or ID (default: 1)
 
 Listen flags:
   --lang LANG      Language hint
+  --chunk-size DUR Chunk size override, 10s-60s (bare ints = seconds)
   --output, -o     Output text file (default: stdout)
   --model REF      STT model index or ID (default: 1)
 
@@ -540,11 +571,17 @@ Server:
   cattery serve                        Start on :7100 (lazy-loaded pools)
   cattery serve --port 8080 -w 2       Custom speak workers
   cattery serve --listen-workers 2     Custom listen workers
+  cattery serve --chunk-size 20s       Shared chunk size override
   cattery serve --speak-model 1        Default TTS model
   cattery serve --listen-model 1       Default STT model
   cattery serve --max-chars 300        Shared char budget (bounds RAM)
   cattery serve --idle-timeout 600     Evict engines after N seconds idle
   cattery serve --keep-alive           Pre-warm engines, never evict
+
+Chunk size:
+  CATTERY_CHUNK_SIZE   Shared override for speak, listen, and serve
+  Auto default         10s <=512MB, 15s <=1GB, 20s <=2GB, 30s <=4GB,
+                       45s <=8GB, 60s >8GB, 30s if RAM is unknown
 
 On first run, cattery downloads the model (~92MB) and runtime (~18MB).
 No accounts or API keys required.

@@ -119,11 +119,13 @@ streams PCM decode + resample into a sliding 16 kHz window instead of loading
 and resampling the full clip up front. The remaining #27 work is chunk-size
 infra in `plan 30`.
 
-### Memory / deployment (next priority)
+### Memory / deployment
 
-- **#27 Bounded-memory streaming** — TTS output streaming and STT input
-  streaming are done. The remaining pass is shared chunk-size infra
-  (`plan 30`) to finish the Pi4 / low-RAM deployment story.
+- **#27 Bounded-memory streaming** — the code path is now landed end-to-end:
+  TTS streams WAV output, STT streams decode/resample, and shared chunk-size
+  infra resolves `flag > env > auto` with a low-memory warning at `<= 512 MB`.
+  Remaining work is empirical RSS / Pi4 / 1 GB validation before closing the
+  issue.
 
 ### Also open
 
@@ -151,7 +153,12 @@ infra in `plan 30`.
   storage, then write the final WAV in one pass.
 - **Lazy engine pool**: engines created on first request, evicted after idle timeout. Full ORT dlclose + malloc_trim reclaims C heap.
 - **Shared char budget**: total characters across all queued requests bounded (default 500). Caps peak RSS regardless of request distribution.
-- **Preflight package**: checks RAM, espeak-ng, model files, and ORT presence; current request handling uses the memory gate and status/CLI expose the rest.
+- **Preflight package**: checks RAM, espeak-ng, model files, and ORT
+  presence; chunk-size resolution and low-memory warnings now live there too.
+- **Shared chunk-size policy**: `preflight` now owns RAM probing plus
+  `CATTERY_CHUNK_SIZE` / `--chunk-size` resolution with precedence
+  `explicit > env > auto`, a conservative `10s..60s` RAM lookup table, and a
+  once-per-process low-memory warning at `<= 512 MB`.
 - **Module path**: `github.com/jikkuatwork/cattery` — matches repo URL for `go get`.
 - **Project license**: `cattery` code is Apache-2.0; packaged releases should
   carry `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`.
@@ -167,6 +174,10 @@ infra in `plan 30`.
   continuous across block boundaries; and the Moonshine loop retains only the
   overlap + unread tail between chunk inferences while duration is tracked
   from decoded source samples.
+- **Chunk size is now runtime-configurable**: `cmdSpeak`, `cmdListen`,
+  `cmdServe`, and `server.New` all resolve chunk size the same way; Moonshine
+  consumes it for streaming STT windows, while Kokoro accepts the field but
+  still chunks by token budget in this pass.
 - **Multi-modal package naming**: CLI verbs = package names = API paths. `speak/` (TTS), `listen/` (STT), future `think/` (LLM), `see/` (vision). Each has an `Engine` interface + per-model subdirectories (e.g. `speak/kokoro/`, `listen/moonshine/`). The "cattery = place where cats live, verbs = cats" metaphor is for branding/website — code uses clean verbs.
 - **Pi4 viability confirmed**: TTS+STT hot = ~250MB RAM, 2-4s round-trip for voice message bot. Comfortable on Pi4 4GB.
 - **Zero system deps goal**: bundle espeak-ng binary + data in `~/.cattery/`, auto-download like ORT/models. No `apt install` needed.
