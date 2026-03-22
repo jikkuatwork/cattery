@@ -106,22 +106,22 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [21](issues/21_server_api_redesign.md) | Server API redesign for multi-modality | **done** | P2 |
 | [22](issues/22_bundle_espeak.md) | Bundle espeak-ng (zero system deps) | open | P1 |
 | [23](issues/23_openai_remote_engines.md) | OpenAI-compatible remote engines | open | P2 |
-| [24](issues/24_tts_sentence_chunking.md) | Transparent sentence chunking for long text TTS | open | P1 |
-| [25](issues/25_text_normalizer.md) | Pure Go text normalizer for TTS preprocessing | open | P1 |
+| [24](issues/24_tts_sentence_chunking.md) | Transparent sentence chunking for long text TTS | **done** | P1 |
+| [25](issues/25_text_normalizer.md) | Pure Go text normalizer for TTS preprocessing | **done** | P1 |
+| [26](issues/26_stt_audio_chunking.md) | STT audio chunking to prevent hallucination | open | P1 |
 
 ## What's Next
 
-**Multi-modality restructure complete** — the 6-issue chain (#16→#21) landed.
-Cattery now has `speak/` (TTS), `listen/` (STT), shared `ort/` runtime,
-multi-modal registry, CLI verbs, and per-modality server endpoints.
+**TTS quality pass complete** — #24 (sentence chunking) and #25 (text normalizer)
+landed. Cattery now handles arbitrary-length text with transparent chunking
+(sentence → clause → word fallback, 480-token budget, 75ms silence gaps) and
+normalizes acronyms, numbers, currency, dates, titles, symbols before
+phonemization. Round-trip baseline: 80% avg word overlap across 20 test cases.
 
-### TTS quality improvements (next priority)
+### STT quality (next priority)
 
-- **#24 Sentence chunking** — Kokoro has a 510-token hard limit (~200-300 chars).
-  Long text silently fails. Need transparent chunking in `Speak()`.
-- **#25 Text normalizer** — Pure Go `normalize/` package. Expand acronyms,
-  numbers, currency, dates, symbols before phonemization. Proven via Ruby spike
-  (`tmp/normalize.rb`) — acronyms round-trip dramatically better after normalization.
+- **#26 STT audio chunking** — Moonshine-tiny hallucinates on audio > ~30s.
+  Need transparent chunking in `Listen()` with silence-detection-preferred cuts.
 
 ### Also open
 
