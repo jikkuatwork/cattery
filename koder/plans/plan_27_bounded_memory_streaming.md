@@ -120,6 +120,7 @@
   server already imports it for memory gating.
 - Compute the auto chunk size with a conservative lookup table, not a fake
   MB-per-second formula:
+  - `<= 512 MB available` => `10s`
   - `<= 1 GB available` => `15s`
   - `<= 2 GB available` => `20s`
   - `<= 4 GB available` => `30s`
@@ -127,6 +128,14 @@
   - `> 8 GB available` => `60s`
   - `unknown availability` => keep the current `30s` default
   Clamp all resolved values to `10s..60s`.
+- Never refuse to run based on low memory. On `<= 512 MB` available, log a
+  one-line warning to stderr at startup: `"warning: low memory (<N>MB) —
+  using minimum chunk size, expect slower synthesis"`. Then proceed normally
+  with `10s` chunks. If OOM happens, the OS kills the process — that is
+  acceptable on extreme hardware. Cattery should never panic, print a stack
+  trace, or exit with a cryptic error on memory pressure; any ORT or
+  allocation failure must be caught and surfaced as a clean, single-line
+  error message (e.g. `"error: out of memory during TTS inference"`).
 - Parse `--chunk-size` and `CATTERY_CHUNK_SIZE` with one helper. Accept Go
   durations like `15s` / `1m`, and also bare integers as seconds to match the
   issue examples. Validation should fail fast outside `10s..60s`. Precedence:
@@ -248,9 +257,14 @@
   file-output clip.
 - `--chunk-size 15s` and `CATTERY_CHUNK_SIZE=15` are accepted, validated, and
   reduce Moonshine peak RSS further.
-- Auto mode picks `15s`, `20s`, `30s`, `45s`, and `60s` on representative
-  `1 GB`, `2 GB`, `4 GB`, `8 GB`, and `16 GB+` systems, and falls back to the
-  current `30s` when memory availability is unknown.
+- Auto mode picks `10s`, `15s`, `20s`, `30s`, `45s`, and `60s` on
+  representative `512 MB`, `1 GB`, `2 GB`, `4 GB`, `8 GB`, and `16 GB+`
+  systems, and falls back to the current `30s` when memory availability is
+  unknown.
+- On `<= 512 MB` available, a one-line stderr warning is emitted but execution
+  proceeds normally with `10s` chunks.
+- All memory-related failures (ORT allocation, Go allocation, or OS signal)
+  produce a clean, single-line error message — never a stack trace or panic.
 - Short inputs keep the current fast path semantics: one Kokoro chunk for short
   speak text, one Moonshine chunk for short audio, no API regression.
 - `go test ./...`, `go build ./...`, and `go vet ./...` pass.

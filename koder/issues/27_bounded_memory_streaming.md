@@ -134,8 +134,10 @@ The Pi4 constraint (4GB, 4-core A72) sets the floor, not the ceiling:
 - [ ] 3-min STT transcription peaks at ≤250MB RSS (vs 424MB today)
 - [ ] Pi4 4GB: both TTS and STT complete a 3-min clip without OOM or swap
 - [ ] 1GB VPS: STT completes a 3-min clip; TTS completes at least 1-min
+- [ ] 512MB: warns on stderr but proceeds with 10s chunks; no panic/trace on OOM
 - [ ] `--chunk-size 15s` works and reduces peak RSS further
-- [ ] Auto-detect picks reasonable defaults on 1GB, 4GB, 16GB systems
+- [ ] Auto-detect picks reasonable defaults on 512MB, 1GB, 4GB, 16GB systems
+- [ ] All memory failures produce clean single-line errors, never stack traces
 - [ ] No regression on short audio (< 30s) — same path, same memory
 - [ ] `go build ./...` and `go vet ./...` pass
 
