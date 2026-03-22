@@ -109,6 +109,7 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [24](issues/24_tts_sentence_chunking.md) | Transparent sentence chunking for long text TTS | **done** | P1 |
 | [25](issues/25_text_normalizer.md) | Pure Go text normalizer for TTS preprocessing | **done** | P1 |
 | [26](issues/26_stt_audio_chunking.md) | STT audio chunking to prevent hallucination | **done** | P1 |
+| [27](issues/27_bounded_memory_streaming.md) | Bounded-memory streaming for TTS/STT | open | P1 |
 
 ## What's Next
 
@@ -117,6 +118,13 @@ normalizer), and #26 (STT audio chunking) landed. Cattery now handles
 arbitrary-length text with transparent TTS chunking and long-form STT with
 resampled 16kHz audio chunking, silence-biased cuts, 0.5s overlap, and
 boundary-word dedup.
+
+### Memory / deployment (next priority)
+
+- **#27 Bounded-memory streaming** — TTS accumulates all chunks in memory
+  (880MB for 3min), STT loads full clip (424MB). Both should be bounded by
+  one chunk (~310MB TTS, ~190MB STT). Includes dynamic chunk sizing based
+  on available RAM and `--chunk-size` override. Unlocks Pi4 4GB and $6 VPS.
 
 ### Also open
 
