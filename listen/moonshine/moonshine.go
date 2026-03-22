@@ -105,44 +105,12 @@ func (e *Engine) Transcribe(r io.Reader, opts listen.Options) (*listen.Result, e
 		return nil, fmt.Errorf("engine is closed")
 	}
 
-	samples, sampleRate, err := audio.ReadPCM(r, e.sampleRate)
-	if err != nil {
-		return nil, fmt.Errorf("read audio: %w", err)
-	}
-	if len(samples) == 0 {
-		return nil, fmt.Errorf("audio is empty")
-	}
-
-	duration := float64(len(samples)) / float64(sampleRate)
-	if sampleRate != e.sampleRate {
-		samples = audio.Resample(samples, sampleRate, e.sampleRate)
-	}
-	if len(samples) == 0 {
-		return nil, fmt.Errorf("audio is empty")
-	}
-
 	lang := strings.TrimSpace(opts.Lang)
 	if lang != "" && !strings.HasPrefix(strings.ToLower(lang), "en") {
 		// Moonshine-tiny is English-only. Ignore the hint for now.
 	}
 
-	start := time.Now()
-
-	text, err := transcribeChunkedPCM(samples, e.sampleRate, e.transcribePCM)
-	if err != nil {
-		return nil, err
-	}
-
-	elapsed := time.Since(start).Seconds()
-	result := &listen.Result{
-		Text:     text,
-		Duration: duration,
-		Elapsed:  elapsed,
-	}
-	if duration > 0 {
-		result.RTF = elapsed / duration
-	}
-	return result, nil
+	return transcribeStream(r, e.sampleRate, e.transcribePCM)
 }
 
 func (e *Engine) transcribePCM(samples []float32) (string, error) {
@@ -239,4 +207,119 @@ func metaInt(meta map[string]string, key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func transcribeStream(
+	r io.Reader,
+	sampleRate int,
+	transcribe func([]float32) (string, error),
+) (*listen.Result, error) {
+	if transcribe == nil {
+		return nil, fmt.Errorf("missing chunk transcriber")
+	}
+
+	stream, err := audio.NewPCMStreamReader(r, sampleRate)
+	if err != nil {
+		return nil, fmt.Errorf("read audio: %w", err)
+	}
+
+	sourceRate := stream.SampleRate()
+	if sourceRate <= 0 {
+		return nil, fmt.Errorf("read audio: source sample rate must be positive")
+	}
+
+	var resampler *audio.StreamResampler
+	if sourceRate != sampleRate {
+		resampler, err = audio.NewStreamResampler(sourceRate, sampleRate)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	readBlock := maxInt(1, secondsToSamples(sourceRate, 1.0))
+	windowCap := secondsToSamples(
+		sampleRate,
+		chunkTargetSeconds+chunkSearchWindowSeconds+chunkOverlapSeconds+1.0,
+	)
+	window := make([]float32, 0, maxInt(1, windowCap))
+	texts := make([]string, 0, 4)
+
+	totalSourceSamples := 0
+	chunkIndex := 0
+	eof := false
+
+	start := time.Now()
+
+	for {
+		plan := planNextChunk(window, sampleRate, eof)
+		if plan.needMore {
+			block, readErr := stream.ReadSamples(readBlock)
+			if readErr == io.EOF {
+				eof = true
+				if resampler != nil {
+					window = append(window, resampler.Flush()...)
+				}
+				continue
+			}
+			if readErr != nil {
+				return nil, fmt.Errorf("read audio: %w", readErr)
+			}
+
+			totalSourceSamples += len(block)
+			if resampler != nil {
+				window = append(window, resampler.Write(block)...)
+			} else {
+				window = append(window, block...)
+			}
+			continue
+		}
+
+		if len(window) == 0 {
+			if eof {
+				break
+			}
+			continue
+		}
+
+		chunkIndex++
+		part := window[plan.chunk.start:plan.chunk.end]
+		if !chunkIsSilent(part, sampleRate, plan.threshold) {
+			text, err := transcribe(part)
+			if err != nil {
+				return nil, fmt.Errorf("transcribe chunk %d: %w", chunkIndex, err)
+			}
+			text = strings.TrimSpace(text)
+			if text != "" {
+				texts = append(texts, text)
+			}
+		}
+
+		if plan.final {
+			break
+		}
+		window = retainWindowTail(window, plan.nextStart)
+	}
+
+	duration := float64(totalSourceSamples) / float64(sourceRate)
+	elapsed := time.Since(start).Seconds()
+	result := &listen.Result{
+		Text:     stitchChunkTexts(texts),
+		Duration: duration,
+		Elapsed:  elapsed,
+	}
+	if duration > 0 {
+		result.RTF = elapsed / duration
+	}
+	return result, nil
+}
+
+func retainWindowTail(window []float32, start int) []float32 {
+	if start <= 0 {
+		return window
+	}
+	if start >= len(window) {
+		return window[:0]
+	}
+	n := copy(window, window[start:])
+	return window[:n]
 }

@@ -29,6 +29,33 @@ func TestTranscribeChunkedPCMKeepsShortAudioInOnePass(t *testing.T) {
 	}
 }
 
+func TestPlanNextChunkNeedsMoreBeforeEOF(t *testing.T) {
+	samples := constantPCM(31, 0.2)
+
+	plan := planNextChunk(samples, defaultSampleRate, false)
+	if !plan.needMore {
+		t.Fatalf("needMore = false, want true")
+	}
+	if plan.chunk.end != 0 {
+		t.Fatalf("chunk end = %d, want 0", plan.chunk.end)
+	}
+}
+
+func TestPlanNextChunkAllowsShortFinalChunkAtEOF(t *testing.T) {
+	samples := constantPCM(10, 0.2)
+
+	plan := planNextChunk(samples, defaultSampleRate, true)
+	if plan.needMore {
+		t.Fatalf("needMore = true, want false")
+	}
+	if !plan.final {
+		t.Fatalf("final = false, want true")
+	}
+	if plan.chunk.start != 0 || plan.chunk.end != len(samples) {
+		t.Fatalf("chunk = %+v, want [0,%d)", plan.chunk, len(samples))
+	}
+}
+
 func TestPlanAudioChunksPrefersSilenceNearTarget(t *testing.T) {
 	samples := append(constantPCM(30.25, 0.2), constantPCM(0.30, 0)...)
 	samples = append(samples, constantPCM(4.45, 0.2)...)

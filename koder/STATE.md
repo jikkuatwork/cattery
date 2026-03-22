@@ -109,21 +109,21 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [24](issues/24_tts_sentence_chunking.md) | Transparent sentence chunking for long text TTS | **done** | P1 |
 | [25](issues/25_text_normalizer.md) | Pure Go text normalizer for TTS preprocessing | **done** | P1 |
 | [26](issues/26_stt_audio_chunking.md) | STT audio chunking to prevent hallucination | **done** | P1 |
-| [27](issues/27_bounded_memory_streaming.md) | Bounded-memory streaming for TTS/STT | open (TTS streaming done) | P1 |
+| [27](issues/27_bounded_memory_streaming.md) | Bounded-memory streaming for TTS/STT | open (TTS + STT streaming done) | P1 |
 
 ## What's Next
 
-**Plan 28 landed** — long-text TTS no longer accumulates one giant PCM slice.
-`kokoro.Engine.Speak()` now streams each chunk into a WAV sink, seekable
-outputs patch the header in place, and stdout / pipes / `bytes.Buffer` still
-work via a temp-backed fallback. The remaining #27 work is STT input
-streaming plus chunk-size infra.
+**Plans 28 and 29 landed** — long-form TTS and STT now keep the live audio
+path bounded. Kokoro streams chunk PCM into a WAV sink, and Moonshine now
+streams PCM decode + resample into a sliding 16 kHz window instead of loading
+and resampling the full clip up front. The remaining #27 work is chunk-size
+infra in `plan 30`.
 
 ### Memory / deployment (next priority)
 
-- **#27 Bounded-memory streaming** — TTS streaming output is done. Next is
-  STT windowed input streaming and shared chunk-size infra (`plan 29`,
-  `plan 30`). That still unlocks Pi4 4GB and low-RAM VPS deployment.
+- **#27 Bounded-memory streaming** — TTS output streaming and STT input
+  streaming are done. The remaining pass is shared chunk-size infra
+  (`plan 30`) to finish the Pi4 / low-RAM deployment story.
 
 ### Also open
 
@@ -161,6 +161,12 @@ streaming plus chunk-size infra.
   chunks resampled PCM at ~30s, prefers nearby silence in a `27s..33s` search
   window, overlaps by 0.5s, skips pure silence, and dedups boundary words at
   stitch time. No API change for callers.
+- **Streaming STT input**: Moonshine no longer reads or resamples full clips
+  up front. `audio.PCMStreamReader` incrementally decodes WAV PCM16, WAV
+  float32, or raw float32 input; `audio.StreamResampler` keeps 16 kHz output
+  continuous across block boundaries; and the Moonshine loop retains only the
+  overlap + unread tail between chunk inferences while duration is tracked
+  from decoded source samples.
 - **Multi-modal package naming**: CLI verbs = package names = API paths. `speak/` (TTS), `listen/` (STT), future `think/` (LLM), `see/` (vision). Each has an `Engine` interface + per-model subdirectories (e.g. `speak/kokoro/`, `listen/moonshine/`). The "cattery = place where cats live, verbs = cats" metaphor is for branding/website — code uses clean verbs.
 - **Pi4 viability confirmed**: TTS+STT hot = ~250MB RAM, 2-4s round-trip for voice message bot. Comfortable on Pi4 4GB.
 - **Zero system deps goal**: bundle espeak-ng binary + data in `~/.cattery/`, auto-download like ORT/models. No `apt install` needed.

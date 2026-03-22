@@ -52,8 +52,12 @@ synthesis should use the same memory as a 10-second one.
 - 2026-03-22: `cmd/cattery`'s `countingWriter` now forwards `Seek(...)` when
   possible and tracks logical output size correctly, so CLI duration / RTF
   reporting stays accurate on the seekable path.
-- Remaining work is STT input streaming (plan 29) and shared chunk-size infra
-  (plan 30).
+- 2026-03-22: plan 29 landed. Moonshine now streams PCM decode and linear
+  resample into a bounded 16 kHz window, the planner works on the current
+  window with explicit `needMore` / EOF behavior, and transcription retains
+  only overlap + unread tail while tracking duration from decoded source
+  samples.
+- Remaining work is shared chunk-size infra (plan 30).
 
 ## Design considerations
 

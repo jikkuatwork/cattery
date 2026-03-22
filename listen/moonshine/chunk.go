@@ -27,59 +27,94 @@ type sampleRange struct {
 	end   int
 }
 
-func planAudioChunks(samples []float32, sampleRate int) []sampleRange {
-	return planAudioChunksWithThreshold(samples, sampleRate, silenceFloorFor(samples))
+type chunkPlan struct {
+	chunk     sampleRange
+	nextStart int
+	threshold float64
+	needMore  bool
+	final     bool
 }
 
-func planAudioChunksWithThreshold(samples []float32, sampleRate int, threshold float64) []sampleRange {
+func planAudioChunks(samples []float32, sampleRate int) []sampleRange {
 	if len(samples) == 0 || sampleRate <= 0 {
 		return nil
 	}
 
-	target := secondsToSamples(sampleRate, chunkTargetSeconds)
-	if len(samples) <= target {
-		return []sampleRange{{start: 0, end: len(samples)}}
+	var chunks []sampleRange
+	for offset := 0; offset < len(samples); {
+		plan := planNextChunk(samples[offset:], sampleRate, true)
+		if plan.chunk.end <= plan.chunk.start {
+			break
+		}
+		chunks = append(chunks, sampleRange{
+			start: offset + plan.chunk.start,
+			end:   offset + plan.chunk.end,
+		})
+		if plan.final {
+			break
+		}
+		offset += plan.nextStart
+	}
+	return chunks
+}
+
+func planNextChunk(samples []float32, sampleRate int, atEOF bool) chunkPlan {
+	return planNextChunkWithThreshold(samples, sampleRate, silenceFloorFor(samples), atEOF)
+}
+
+func planNextChunkWithThreshold(
+	samples []float32,
+	sampleRate int,
+	threshold float64,
+	atEOF bool,
+) chunkPlan {
+	if len(samples) == 0 || sampleRate <= 0 {
+		return chunkPlan{threshold: threshold, needMore: !atEOF}
 	}
 
 	search := secondsToSamples(sampleRate, chunkSearchWindowSeconds)
+	target := secondsToSamples(sampleRate, chunkTargetSeconds)
 	overlap := secondsToSamples(sampleRate, chunkOverlapSeconds)
-	silentRuns := findSilentRuns(samples, sampleRate, threshold)
 
-	start := 0
-	chunks := make([]sampleRange, 0, len(samples)/target+2)
-	for start < len(samples) {
-		remaining := len(samples) - start
-		if remaining <= target {
-			chunks = append(chunks, sampleRange{start: start, end: len(samples)})
-			break
+	if !atEOF && len(samples) < target+search {
+		return chunkPlan{
+			threshold: threshold,
+			needMore:  true,
 		}
-
-		targetCut := start + target
-		cut := targetCut
-		searchSpan := sampleRange{
-			start: maxInt(start+target-search, start),
-			end:   minInt(start+target+search, len(samples)),
-		}
-		if nearest, ok := nearestSilenceCut(targetCut, searchSpan, silentRuns); ok {
-			cut = nearest
-		}
-		if cut <= start {
-			cut = minInt(start+1, len(samples))
-		}
-
-		chunks = append(chunks, sampleRange{start: start, end: cut})
-		if cut >= len(samples) {
-			break
-		}
-
-		nextStart := cut - overlap
-		if nextStart <= start {
-			nextStart = cut
-		}
-		start = nextStart
 	}
 
-	return chunks
+	if len(samples) <= target {
+		return chunkPlan{
+			chunk:     sampleRange{start: 0, end: len(samples)},
+			nextStart: len(samples),
+			threshold: threshold,
+			final:     atEOF,
+		}
+	}
+
+	cut := target
+	searchSpan := sampleRange{
+		start: maxInt(target-search, 0),
+		end:   minInt(target+search, len(samples)),
+	}
+	if nearest, ok := nearestSilenceCut(target, searchSpan, findSilentRuns(samples, sampleRate, threshold)); ok {
+		cut = nearest
+	}
+	if cut <= 0 {
+		cut = minInt(1, len(samples))
+	}
+
+	nextStart := cut - overlap
+	if nextStart <= 0 {
+		nextStart = cut
+	}
+
+	return chunkPlan{
+		chunk:     sampleRange{start: 0, end: cut},
+		nextStart: nextStart,
+		threshold: threshold,
+		final:     atEOF && cut >= len(samples),
+	}
 }
 
 func transcribeChunkedPCM(
@@ -91,27 +126,47 @@ func transcribeChunkedPCM(
 		return "", nil
 	}
 
-	threshold := silenceFloorFor(samples)
-	chunks := planAudioChunksWithThreshold(samples, sampleRate, threshold)
+	if transcribe == nil {
+		return "", fmt.Errorf("missing chunk transcriber")
+	}
 
-	texts := make([]string, 0, len(chunks))
-	for i, chunk := range chunks {
-		part := samples[chunk.start:chunk.end]
-		if chunkIsSilent(part, sampleRate, threshold) {
-			continue
+	estChunks := 2
+	if sampleRate > 0 {
+		target := secondsToSamples(sampleRate, chunkTargetSeconds)
+		if target > 0 {
+			estChunks = len(samples)/target + 2
 		}
-		if transcribe == nil {
-			return "", fmt.Errorf("missing chunk transcriber")
+	}
+	texts := make([]string, 0, estChunks)
+	for offset, chunkIndex := 0, 0; offset < len(samples); {
+		plan := planNextChunk(samples[offset:], sampleRate, true)
+		if plan.chunk.end <= plan.chunk.start {
+			break
+		}
+
+		chunkIndex++
+		part := samples[offset+plan.chunk.start : offset+plan.chunk.end]
+		if chunkIsSilent(part, sampleRate, plan.threshold) {
+			if plan.final {
+				break
+			}
+			offset += plan.nextStart
+			continue
 		}
 
 		text, err := transcribe(part)
 		if err != nil {
-			return "", fmt.Errorf("transcribe chunk %d: %w", i+1, err)
+			return "", fmt.Errorf("transcribe chunk %d: %w", chunkIndex, err)
 		}
 		text = strings.TrimSpace(text)
 		if text != "" {
 			texts = append(texts, text)
 		}
+
+		if plan.final {
+			break
+		}
+		offset += plan.nextStart
 	}
 
 	return stitchChunkTexts(texts), nil
