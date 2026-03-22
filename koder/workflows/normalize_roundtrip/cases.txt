@@ -1,0 +1,87 @@
+# Normalize round-trip test cases — 20 cases
+#
+# Covers: titles, currency, percentages, decimals, ordinals, cardinals,
+# dates, times, mixed-case scientific, possessive acronyms, acronyms,
+# symbols, units, abbreviations, and combinations.
+#
+# EXPECT is what STT should approximately return (written form).
+
+# 1. Titles + currency
+INPUT: Dr. Smith paid $3.50 for the IEEE membership.
+EXPECT: Doctor Smith paid $3.50 for the IEEE membership.
+
+# 2. Spoken-as-word acronym + cardinals + currency
+INPUT: NASA launched 3 rockets in 2024, spending $1.2 billion.
+EXPECT: NASA launched three rockets in 2024, spending $1.2 billion.
+
+# 3. Mixed-case scientific + percentage
+INPUT: The mRNA vaccine was 94.1% effective against COVID-19.
+EXPECT: The MRNA vaccine was 94.1% effective against COVID-19.
+
+# 4. Title + possessive acronym + ordinal + date
+INPUT: Prof. Johnson presented at MIT's 150th anniversary on 3/15/2026.
+EXPECT: Professor Johnson presented at MIT's 150th anniversary on March 15, 2026.
+
+# 5. Mixed-case scientific + symbol + decimal
+INPUT: The pH level was 7.4 & the temperature was 98.6 degrees F.
+EXPECT: The pH level was 7.4 and the temperature was 98.6 degrees F.
+
+# 6. Acronym in context + time
+INPUT: Flight UA2491 departs at 3:30pm from gate B12.
+EXPECT: Flight UA 2491 departs at 3:30 p.m. from gate B12.
+
+# 7. Acronym + large cardinal + abbreviation
+INPUT: According to WHO, approximately 340,000 people vs. 280,000 last year were affected.
+EXPECT: According to WHO, approximately 340,000 people versus 280,000 last year were affected.
+
+# 8. Multiple acronyms + currency + percentage
+INPUT: The CEO of IBM earned $15.3 million in FY2025, a 12% increase.
+EXPECT: The CEO of IBM earned $15.3 million in FY 2025, a 12% increase.
+
+# 9. Units + symbol + currency
+INPUT: Buy 2kg of flour & 500ml of milk at $4.99 each.
+EXPECT: Buy 2 kilograms of flour and 500 milliliters of milk at $4.99 each.
+
+# 10. Ordinal + acronym + technical numbers
+INPUT: The 1st IEEE 802.11ax standard supports 9.6 Gbps.
+EXPECT: The first IEEE 802.11ax standard supports 9.6 Gbps.
+
+# 11. Multiple titles
+INPUT: Mrs. Davis and Rev. Thompson met with Sen. Williams on 1/20/2025.
+EXPECT: Missus Davis and Reverend Thompson met with Senator Williams on January 20, 2025.
+
+# 12. Currency varieties
+INPUT: The bill was £49.99 in London and €52.30 in Paris.
+EXPECT: The bill was 49 pounds and 99 pence in London and 52 euros and 30 cents in Paris.
+
+# 13. Ordinals in sequence
+INPUT: She finished 1st in the 100m, 3rd in the 200m, and 22nd overall.
+EXPECT: She finished first in the 100 meters, third in the 200 meters, and twenty second overall.
+
+# 14. Abbreviation-heavy
+INPUT: The dept. est. approx. 500 refs. in vol. 3, i.e. the misc. appendix.
+EXPECT: The department estimated approximately 500 references in volume 3, that is the miscellaneous appendix.
+
+# 15. Time variations
+INPUT: The meeting is at 9am, lunch at 12:15pm, and departure at 5:45pm.
+EXPECT: The meeting is at nine a.m., lunch at 12:15 p.m., and departure at 5:45 p.m.
+
+# 16. Scientific with numbers
+INPUT: The DNA sample contained 3.7 million base pairs with pH 6.8 buffer.
+EXPECT: The DNA sample contained 3.7 million base pairs with pH 6.8 buffer.
+
+# 17. Symbol-heavy
+INPUT: The result was A + B = C & the margin was < 0.01.
+EXPECT: The result was A plus B equals C and the margin was less than 0.01.
+
+# 18. Large numbers + percentage
+INPUT: Revenue hit $2.4 billion, up 18% from 2023's $2.03 billion.
+EXPECT: Revenue hit $2.4 billion, up 18% from 2023's $2.03 billion.
+
+# 19. Mixed everything
+INPUT: Dr. Lee's mRNA study at MIT found 87.3% efficacy across 12,500 patients on 6/1/2025.
+EXPECT: Doctor Lee's MRNA study at MIT found 87.3% efficacy across 12,500 patients on June 1, 2025.
+
+# 20. Conversational with units and abbreviations
+INPUT: I drove 45km in approx. 30 mins at 90 km/h, i.e. faster than the 80 mph limit.
+EXPECT: I drove 45 kilometers in approximately 30 minutes at 90 kilometers per hour, that is faster than the 80 miles per hour limit.
