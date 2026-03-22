@@ -18,7 +18,7 @@ windows, not a bug in the audio or TTS output.
 
 ## Goal
 
-Make `Listen()` transparently handle audio of any length by splitting into
+Make `Transcribe()` transparently handle audio of any length by splitting into
 ~30-second segments, transcribing each independently, and concatenating
 the text output. No API change — callers still pass full audio.
 
@@ -35,7 +35,7 @@ the text output. No API change — callers still pass full audio.
 
 ### Where to chunk
 
-Inside `moonshine.Listen()`, before inference:
+Inside `moonshine.Engine.Transcribe()`, after `audio.ReadPCM` and resampling, before inference:
 
 ```
 audio → detect length → if > threshold: chunk audio → for each chunk: transcribe → concatenate text
@@ -54,13 +54,14 @@ audio → detect length → if > threshold: chunk audio → for each chunk: tran
 - Audio shorter than 30s: no chunking, pass through directly
 - Pure silence segments: skip, don't transcribe
 - Very quiet audio: lower silence threshold to -50dB
-- Overlap dedup: simple word-level comparison of last N words of
-  chunk[i] vs first N words of chunk[i+1]
+- Overlap dedup: suffix-prefix word match (not general LCS) — find the
+  longest suffix of chunk[i] text that equals a prefix of chunk[i+1]
+  text, capped at 8 words. At 0.5s overlap expect ~1-2 words.
 
 ## File changes
 
 - **Create**: `listen/moonshine/chunk.go` — audio chunking + silence detection
-- **Edit**: `listen/moonshine/moonshine.go` — wire chunking into `Listen()`
+- **Edit**: `listen/moonshine/moonshine.go` — wire chunking into `Transcribe()`
 - **Maybe create**: `listen/moonshine/chunk_test.go` — unit tests
 
 ## Acceptance criteria
@@ -75,8 +76,10 @@ audio → detect length → if > threshold: chunk audio → for each chunk: tran
 
 - 30s is conservative; Moonshine may handle up to 45-60s on some inputs.
   Start conservative, can increase later based on testing.
-- Silence detection operates on raw PCM (16kHz int16), no FFT needed —
-  just sliding-window RMS.
+- Silence detection operates on normalized `[]float32` PCM (16kHz after
+  resampling), no FFT needed — just sliding-window RMS in dBFS.
+  Chunk sample counts always use `e.sampleRate` (16000), not the
+  original input rate.
 - Future: VAD (voice activity detection) would be more robust than
   amplitude-based silence detection, but adds complexity. Simple
   approach first.

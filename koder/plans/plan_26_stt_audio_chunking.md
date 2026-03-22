@@ -27,15 +27,18 @@
 - Add a new helper file, `listen/moonshine/chunk.go`, for chunk planning and
   transcript stitching.
 - Chunk after `audio.ReadPCM(...)` and after resampling to `e.sampleRate`,
-  before `ortgo.NewTensor(...)`.
+  before `ortgo.NewTensor(...)`. All chunk sample counts and boundaries are
+  in `e.sampleRate` (16000) space, not the original input sample rate.
 - Use fixed 30s target chunks.
 - For each target boundary, search for silence inside a `27s..33s` window
   relative to the chunk start.
 - If silence exists, cut at the silence point closest to the 30s target.
 - If no silence exists in that window, hard-cut at 30s.
 - Add 0.5s overlap by starting the next chunk 0.5s before the prior cut.
-- Dedup overlap at the text layer by removing the longest shared word sequence
-  between the prior suffix and next prefix, with a small capped word window.
+- Dedup overlap at the text layer using suffix-prefix word matching: find the
+  longest suffix of chunk[i] text that equals a prefix of chunk[i+1] text,
+  capped at 8 words. This is not a general LCS — only boundary overlap matters.
+  At 0.5s overlap and normal speech rate (~2.5 words/sec), expect 1-2 words.
 - Silence detection uses sliding-window RMS on mono 16 kHz PCM.
 - The current code stores PCM as normalized `[]float32`, not `[]int16`, so the
   RMS math should be expressed in dBFS, equivalent to int16 full-scale.
@@ -80,8 +83,9 @@
    nearest-silence cut rule, a hard-cut-at-30s fallback, and a 0.5s overlap
    on the next chunk start.
 5. Skip pure-silence chunks before inference.
-6. Stitch chunk transcripts by trimming the longest shared word overlap across
-   chunk boundaries before concatenation.
+6. Stitch chunk transcripts using suffix-prefix word matching (cap 8 words)
+   to remove duplicated boundary words before concatenation. Each chunk gets
+   a fresh KV cache — no cross-chunk decoder state.
 7. Keep `listen.Result.Duration` tied to the original clip duration and time
    the full `Transcribe()` call once, not per chunk.
 8. Add tests for short audio passthrough, preferred silence cuts near a 30s
