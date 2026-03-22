@@ -15,7 +15,7 @@ cattery "Hello, world."
 - **Inference**: ONNX Runtime 1.24.1+ via `yalue/onnxruntime_go` v1.27.0 (dlopen)
 - **Model**: Kokoro-82M int8 quantized (92MB ONNX)
 - **Phonemization**: espeak-ng via `os/exec` (only system dep)
-- **Audio**: WAV (pure Go writer)
+- **Audio**: WAV (pure Go streaming writer)
 
 ## Architecture
 
@@ -109,22 +109,21 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [24](issues/24_tts_sentence_chunking.md) | Transparent sentence chunking for long text TTS | **done** | P1 |
 | [25](issues/25_text_normalizer.md) | Pure Go text normalizer for TTS preprocessing | **done** | P1 |
 | [26](issues/26_stt_audio_chunking.md) | STT audio chunking to prevent hallucination | **done** | P1 |
-| [27](issues/27_bounded_memory_streaming.md) | Bounded-memory streaming for TTS/STT | open | P1 |
+| [27](issues/27_bounded_memory_streaming.md) | Bounded-memory streaming for TTS/STT | open (TTS streaming done) | P1 |
 
 ## What's Next
 
-**Local quality pass complete** — #24 (sentence chunking), #25 (text
-normalizer), and #26 (STT audio chunking) landed. Cattery now handles
-arbitrary-length text with transparent TTS chunking and long-form STT with
-resampled 16kHz audio chunking, silence-biased cuts, 0.5s overlap, and
-boundary-word dedup.
+**Plan 28 landed** — long-text TTS no longer accumulates one giant PCM slice.
+`kokoro.Engine.Speak()` now streams each chunk into a WAV sink, seekable
+outputs patch the header in place, and stdout / pipes / `bytes.Buffer` still
+work via a temp-backed fallback. The remaining #27 work is STT input
+streaming plus chunk-size infra.
 
 ### Memory / deployment (next priority)
 
-- **#27 Bounded-memory streaming** — TTS accumulates all chunks in memory
-  (880MB for 3min), STT loads full clip (424MB). Both should be bounded by
-  one chunk (~310MB TTS, ~190MB STT). Includes dynamic chunk sizing based
-  on available RAM and `--chunk-size` override. Unlocks Pi4 4GB and $6 VPS.
+- **#27 Bounded-memory streaming** — TTS streaming output is done. Next is
+  STT windowed input streaming and shared chunk-size infra (`plan 29`,
+  `plan 30`). That still unlocks Pi4 4GB and low-RAM VPS deployment.
 
 ### Also open
 
@@ -147,6 +146,9 @@ boundary-word dedup.
 - **~/.cattery/ for data**: simple default for current platforms.
 - **ORT stderr suppressed**: redirect fd during init to hide C-level warnings.
 - **WAV bytes, not base64**: REST API returns raw WAV with Content-Type: audio/wav. 33% smaller than base64.
+- **Streaming WAV output**: TTS now writes PCM16 chunk-by-chunk. Seekable
+  outputs patch the header on close; non-seekable outputs spool PCM to temp
+  storage, then write the final WAV in one pass.
 - **Lazy engine pool**: engines created on first request, evicted after idle timeout. Full ORT dlclose + malloc_trim reclaims C heap.
 - **Shared char budget**: total characters across all queued requests bounded (default 500). Caps peak RSS regardless of request distribution.
 - **Preflight package**: checks RAM, espeak-ng, model files, and ORT presence; current request handling uses the memory gate and status/CLI expose the rest.

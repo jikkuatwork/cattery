@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,12 +24,30 @@ func (t *outputTarget) Close() error {
 type countingWriter struct {
 	writer io.Writer
 	count  int64
+	offset int64
 }
 
 func (w *countingWriter) Write(p []byte) (int, error) {
 	n, err := w.writer.Write(p)
-	w.count += int64(n)
+	w.offset += int64(n)
+	if w.offset > w.count {
+		w.count = w.offset
+	}
 	return n, err
+}
+
+func (w *countingWriter) Seek(offset int64, whence int) (int64, error) {
+	seeker, ok := w.writer.(io.Seeker)
+	if !ok {
+		return 0, fmt.Errorf("seek: %w", errors.ErrUnsupported)
+	}
+
+	pos, err := seeker.Seek(offset, whence)
+	if err != nil {
+		return 0, err
+	}
+	w.offset = pos
+	return pos, nil
 }
 
 func stdinHasData() bool {

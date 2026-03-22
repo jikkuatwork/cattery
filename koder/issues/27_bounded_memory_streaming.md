@@ -44,6 +44,17 @@ fits comfortably.
 Peak RSS should be proportional to **one chunk**, not the full clip. A 3-minute
 synthesis should use the same memory as a 10-second one.
 
+## Progress
+
+- 2026-03-22: plan 28 landed. TTS now streams chunk audio through
+  `audio.WAVWriter`; seekable outputs patch the WAV header in place, while
+  stdout, pipes, and `bytes.Buffer` use a temp-file fallback.
+- 2026-03-22: `cmd/cattery`'s `countingWriter` now forwards `Seek(...)` when
+  possible and tracks logical output size correctly, so CLI duration / RTF
+  reporting stays accurate on the seekable path.
+- Remaining work is STT input streaming (plan 29) and shared chunk-size infra
+  (plan 30).
+
 ## Design considerations
 
 ### TTS streaming output
@@ -139,7 +150,7 @@ The Pi4 constraint (4GB, 4-core A72) sets the floor, not the ceiling:
 - [ ] Auto-detect picks reasonable defaults on 512MB, 1GB, 4GB, 16GB systems
 - [ ] All memory failures produce clean single-line errors, never stack traces
 - [ ] No regression on short audio (< 30s) — same path, same memory
-- [ ] `go build ./...` and `go vet ./...` pass
+- [x] `go build ./...` and `go vet ./...` pass
 
 ## File changes (likely)
 

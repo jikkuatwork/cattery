@@ -107,7 +107,7 @@ func (e *Engine) Voices() []speak.Voice {
 }
 
 // Speak phonemizes the text, resolves a voice, runs Kokoro, and writes WAV.
-func (e *Engine) Speak(w io.Writer, text string, opts speak.Options) error {
+func (e *Engine) Speak(w io.Writer, text string, opts speak.Options) (err error) {
 	if e == nil || e.session == nil {
 		return fmt.Errorf("engine is closed")
 	}
@@ -156,13 +156,53 @@ func (e *Engine) Speak(w io.Writer, text string, opts speak.Options) error {
 	}
 
 	stylePath := result.Files[asset.File.Filename]
-	samples, err := e.synthesizeChunks(stylePath, chunks, float32(speed))
-	if err != nil {
-		return err
+	sampleRate := sampleRateFor(e.model)
+	gap := make([]float32, silenceSamples(sampleRate, chunkGapMillis))
+
+	var wav *audio.WAVWriter
+	defer func() {
+		if wav == nil {
+			return
+		}
+		if closeErr := wav.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("write wav: %w", closeErr)
+		}
+	}()
+
+	wroteChunk := false
+	for i, chunk := range chunks {
+		tokens := tokenize(chunk)
+		if len(tokens) == 0 {
+			continue
+		}
+
+		samples, synthErr := e.synthesizeChunk(stylePath, tokens, float32(speed))
+		if synthErr != nil {
+			return fmt.Errorf("synthesize chunk %d: %w", i+1, synthErr)
+		}
+
+		if wav == nil {
+			wav, err = audio.NewWAVWriter(w, sampleRate)
+			if err != nil {
+				return fmt.Errorf("write wav: %w", err)
+			}
+		}
+
+		if wroteChunk && len(gap) > 0 {
+			if err := wav.WriteSamples(gap); err != nil {
+				return fmt.Errorf("write wav: %w", err)
+			}
+		}
+		if err := wav.WriteSamples(samples); err != nil {
+			return fmt.Errorf("write wav: %w", err)
+		}
+
+		samples = nil
+		wroteChunk = true
 	}
 
-	if err := audio.WriteWAV(w, samples, sampleRateFor(e.model)); err != nil {
-		return fmt.Errorf("write wav: %w", err)
+	if !wroteChunk {
+		return fmt.Errorf("no speakable content in text")
 	}
 
 	return nil
@@ -219,37 +259,6 @@ func (e *Engine) synthesize(tokens []int64, style []float32, speed float32) ([]f
 	samples := make([]float32, len(src))
 	copy(samples, src)
 	return samples, nil
-}
-
-func (e *Engine) synthesizeChunks(stylePath string, chunks []string, speed float32) ([]float32, error) {
-	gap := make([]float32, silenceSamples(sampleRateFor(e.model), chunkGapMillis))
-
-	var combined []float32
-	wroteChunk := false
-
-	for i, chunk := range chunks {
-		tokens := tokenize(chunk)
-		if len(tokens) == 0 {
-			continue
-		}
-
-		samples, err := e.synthesizeChunk(stylePath, tokens, speed)
-		if err != nil {
-			return nil, fmt.Errorf("synthesize chunk %d: %w", i+1, err)
-		}
-
-		if wroteChunk && len(gap) > 0 {
-			combined = append(combined, gap...)
-		}
-		combined = append(combined, samples...)
-		wroteChunk = true
-	}
-
-	if !wroteChunk {
-		return nil, fmt.Errorf("no speakable content in text")
-	}
-
-	return combined, nil
 }
 
 func (e *Engine) synthesizeChunk(stylePath string, tokens []int64, speed float32) ([]float32, error) {
