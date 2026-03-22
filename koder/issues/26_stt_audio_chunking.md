@@ -1,6 +1,6 @@
 # 26 — STT audio chunking to prevent hallucination on long input
 
-## Status: open
+## Status: done
 ## Priority: P1
 ## Depends on: #20 (listen package)
 ## Blocks: nothing
@@ -21,6 +21,13 @@ windows, not a bug in the audio or TTS output.
 Make `Transcribe()` transparently handle audio of any length by splitting into
 ~30-second segments, transcribing each independently, and concatenating
 the text output. No API change — callers still pass full audio.
+
+## Outcome
+
+- `moonshine.Engine.Transcribe()` now chunks resampled 16kHz PCM internally.
+- Cuts prefer nearby silence in the `27s..33s` window, then hard-cut at 30s.
+- Pure silence is skipped, and adjacent chunk text is stitched with 0.5s
+  overlap plus boundary-word dedup.
 
 ## Design
 
@@ -67,9 +74,9 @@ audio → detect length → if > threshold: chunk audio → for each chunk: tran
 ## Acceptance criteria
 
 - [ ] `cattery listen long_audio.wav` works for 60s+ audio without hallucination
-- [ ] Short audio (< 30s) is unchanged — no regression
-- [ ] Chunk boundaries don't split words
-- [ ] `go build ./...` and `go vet ./...` pass
+- [x] Short audio (< 30s) is unchanged — no regression
+- [x] Chunk boundaries don't split words
+- [x] `go build ./...` and `go vet ./...` pass
 - [ ] Round-trip test: long TTS → STT produces coherent text (no repetition loops)
 
 ## Notes

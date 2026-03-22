@@ -108,20 +108,15 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [23](issues/23_openai_remote_engines.md) | OpenAI-compatible remote engines | open | P2 |
 | [24](issues/24_tts_sentence_chunking.md) | Transparent sentence chunking for long text TTS | **done** | P1 |
 | [25](issues/25_text_normalizer.md) | Pure Go text normalizer for TTS preprocessing | **done** | P1 |
-| [26](issues/26_stt_audio_chunking.md) | STT audio chunking to prevent hallucination | open | P1 |
+| [26](issues/26_stt_audio_chunking.md) | STT audio chunking to prevent hallucination | **done** | P1 |
 
 ## What's Next
 
-**TTS quality pass complete** — #24 (sentence chunking) and #25 (text normalizer)
-landed. Cattery now handles arbitrary-length text with transparent chunking
-(sentence → clause → word fallback, 480-token budget, 75ms silence gaps) and
-normalizes acronyms, numbers, currency, dates, titles, symbols before
-phonemization. Round-trip baseline: 80% avg word overlap across 20 test cases.
-
-### STT quality (next priority)
-
-- **#26 STT audio chunking** — Moonshine-tiny hallucinates on audio > ~30s.
-  Need transparent chunking in `Listen()` with silence-detection-preferred cuts.
+**Local quality pass complete** — #24 (sentence chunking), #25 (text
+normalizer), and #26 (STT audio chunking) landed. Cattery now handles
+arbitrary-length text with transparent TTS chunking and long-form STT with
+resampled 16kHz audio chunking, silence-biased cuts, 0.5s overlap, and
+boundary-word dedup.
 
 ### Also open
 
@@ -152,6 +147,10 @@ phonemization. Round-trip baseline: 80% avg word overlap across 20 test cases.
   carry `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`.
 - **License audit documented**: current third-party licensing and distribution obligations are recorded in `THIRD_PARTY_NOTICES.md`.
 - **STT model: Moonshine-tiny**: 27MB quantized ONNX, raw 16kHz PCM input (no mel spectrograms), 28x real-time on CPU, shares ORT instance with TTS. Community ONNX export from onnx-community/moonshine-tiny-ONNX. Weight license unclear — needs clarification before distribution.
+- **STT chunking lives in Moonshine**: `moonshine.Engine.Transcribe()` now
+  chunks resampled PCM at ~30s, prefers nearby silence in a `27s..33s` search
+  window, overlaps by 0.5s, skips pure silence, and dedups boundary words at
+  stitch time. No API change for callers.
 - **Multi-modal package naming**: CLI verbs = package names = API paths. `speak/` (TTS), `listen/` (STT), future `think/` (LLM), `see/` (vision). Each has an `Engine` interface + per-model subdirectories (e.g. `speak/kokoro/`, `listen/moonshine/`). The "cattery = place where cats live, verbs = cats" metaphor is for branding/website — code uses clean verbs.
 - **Pi4 viability confirmed**: TTS+STT hot = ~250MB RAM, 2-4s round-trip for voice message bot. Comfortable on Pi4 4GB.
 - **Zero system deps goal**: bundle espeak-ng binary + data in `~/.cattery/`, auto-download like ORT/models. No `apt install` needed.

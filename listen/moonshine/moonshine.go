@@ -128,36 +128,14 @@ func (e *Engine) Transcribe(r io.Reader, opts listen.Options) (*listen.Result, e
 
 	start := time.Now()
 
-	audioTensor, err := ortgo.NewTensor(ortgo.NewShape(1, int64(len(samples))), samples)
+	text, err := transcribeChunkedPCM(samples, e.sampleRate, e.transcribePCM)
 	if err != nil {
-		return nil, fmt.Errorf("create audio tensor: %w", err)
-	}
-	defer audioTensor.Destroy()
-
-	outputs := []ortgo.Value{nil}
-	if err := e.encoder.Run([]ortgo.Value{audioTensor}, outputs); err != nil {
-		return nil, fmt.Errorf("run encoder: %w", err)
-	}
-	defer destroyValues(outputs)
-
-	encTensor, ok := outputs[0].(*ortgo.Tensor[float32])
-	if !ok {
-		return nil, fmt.Errorf("unexpected encoder output type %T", outputs[0])
-	}
-
-	encShape := encTensor.GetShape()
-	if len(encShape) < 2 {
-		return nil, fmt.Errorf("unexpected encoder output shape %v", encShape)
-	}
-
-	tokenIDs, err := e.decoder.decode(outputs[0], encShape[1])
-	if err != nil {
-		return nil, fmt.Errorf("decode: %w", err)
+		return nil, err
 	}
 
 	elapsed := time.Since(start).Seconds()
 	result := &listen.Result{
-		Text:     decodeTokens(e.tokenizer, tokenIDs),
+		Text:     text,
 		Duration: duration,
 		Elapsed:  elapsed,
 	}
@@ -165,6 +143,37 @@ func (e *Engine) Transcribe(r io.Reader, opts listen.Options) (*listen.Result, e
 		result.RTF = elapsed / duration
 	}
 	return result, nil
+}
+
+func (e *Engine) transcribePCM(samples []float32) (string, error) {
+	audioTensor, err := ortgo.NewTensor(ortgo.NewShape(1, int64(len(samples))), samples)
+	if err != nil {
+		return "", fmt.Errorf("create audio tensor: %w", err)
+	}
+	defer audioTensor.Destroy()
+
+	outputs := []ortgo.Value{nil}
+	if err := e.encoder.Run([]ortgo.Value{audioTensor}, outputs); err != nil {
+		return "", fmt.Errorf("run encoder: %w", err)
+	}
+	defer destroyValues(outputs)
+
+	encTensor, ok := outputs[0].(*ortgo.Tensor[float32])
+	if !ok {
+		return "", fmt.Errorf("unexpected encoder output type %T", outputs[0])
+	}
+
+	encShape := encTensor.GetShape()
+	if len(encShape) < 2 {
+		return "", fmt.Errorf("unexpected encoder output shape %v", encShape)
+	}
+
+	tokenIDs, err := e.decoder.decode(outputs[0], encShape[1])
+	if err != nil {
+		return "", fmt.Errorf("decode: %w", err)
+	}
+
+	return decodeTokens(e.tokenizer, tokenIDs), nil
 }
 
 // SampleRate returns the Moonshine input sample rate.
