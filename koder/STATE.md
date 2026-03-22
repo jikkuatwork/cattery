@@ -90,66 +90,46 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [05](issues/05_cross_platform_build.md) | Cross-platform build | open | P2 |
 | [06](issues/06_rest_server.md) | REST API server | **done** | P1 |
 | [07](issues/07_license_audit.md) | License audit (model hosting, deps) | open (audit + repo license done) | P1 |
-| [08](issues/08_stt_module.md) | Speech-to-text module | open (spike proven, superseded by #16-#21) | P1 |
-| [09](issues/09_pretty_help.md) | Pretty CLI help | open (subsumed by #19) | P3 |
-| [10](issues/10_server_api_audit.md) | Server API audit for apps | open (subsumed by #21) | P2 |
+| [08](issues/08_stt_module.md) | Speech-to-text module | **done** (superseded by #16-#21) | P1 |
+| [09](issues/09_pretty_help.md) | Pretty CLI help | **done** (subsumed by #19) | P3 |
+| [10](issues/10_server_api_audit.md) | Server API audit for apps | **done** (subsumed by #21) | P2 |
 | [11](issues/11_server_auth.md) | Optional server auth | open | P2 |
 | [12](issues/12_llm_proxy.md) | LLM proxy (Ollama/OpenRouter) | open | P2 |
 | [13](issues/13_local_4b_model.md) | Local 4B LLM via ONNX | open | P3 |
 | [14](issues/14_web_ui.md) | Embedded web UI | open | P3 |
 | [15](issues/15_mirror_json.md) | Artefact mirror registry (mirror.json) | open | P2 |
-| [16](issues/16_extract_ort_runtime.md) | Extract shared ORT runtime from engine/ | open | P0 |
-| [17](issues/17_tts_engine_interface.md) | TTS engine interface + package restructure | open | P0 |
-| [18](issues/18_registry_redesign.md) | Registry redesign for multi-modal artefacts | open | P1 |
-| [19](issues/19_cli_redesign.md) | CLI redesign: subcommand-per-modality | open | P1 |
-| [20](issues/20_stt_package.md) | STT package: Moonshine-tiny | open | P1 |
+| [16](issues/16_extract_ort_runtime.md) | Extract shared ORT runtime from engine/ | **done** | P0 |
+| [17](issues/17_tts_engine_interface.md) | TTS engine interface + package restructure | **done** | P0 |
+| [18](issues/18_registry_redesign.md) | Registry redesign for multi-modal artefacts | **done** | P1 |
+| [19](issues/19_cli_redesign.md) | CLI redesign: subcommand-per-modality | **done** | P1 |
+| [20](issues/20_stt_package.md) | STT package: Moonshine-tiny | **done** | P1 |
 | [21](issues/21_server_api_redesign.md) | Server API redesign for multi-modality | **done** | P2 |
 | [22](issues/22_bundle_espeak.md) | Bundle espeak-ng (zero system deps) | open | P1 |
 | [23](issues/23_openai_remote_engines.md) | OpenAI-compatible remote engines | open | P2 |
+| [24](issues/24_tts_sentence_chunking.md) | Transparent sentence chunking for long text TTS | open | P1 |
+| [25](issues/25_text_normalizer.md) | Pure Go text normalizer for TTS preprocessing | open | P1 |
 
 ## What's Next
 
-**Multi-modality restructure** — 6-issue chain to transform cattery from TTS-only
-to a multi-modal audio system (STT → LLM API → TTS conversational loop).
+**Multi-modality restructure complete** — the 6-issue chain (#16→#21) landed.
+Cattery now has `speak/` (TTS), `listen/` (STT), shared `ort/` runtime,
+multi-modal registry, CLI verbs, and per-modality server endpoints.
 
-### Orchestration
+### TTS quality improvements (next priority)
 
-Executing via **harnex Fire & Watch** (see `koder/workflows/harnex/dispatch.md`).
-All work on **main** — no worktrees, no feature branches, no review cycles.
-Flow: `codex implements → verify build → commit on main → next issue`.
-
-### Dependency chain
-
-```
-#16 Extract ORT runtime ──┬──→ #17 TTS engine interface ──→ #19 CLI redesign
-                          │                                       ↑
-                          ├──→ #18 Registry redesign ──→ #20 STT package ─┤
-                          │                                       ↓
-                          └─────────────────────────────→ #21 Server API redesign
-```
-
-### Execution order
-
-| Step | Issue | Status |
-|------|-------|--------|
-| 1 | **#16** Extract ORT — foundation, pure refactor | **ready** |
-| 2 | **#17** TTS interface — `speak/` + `speak/kokoro/` | blocked on #16 |
-| 3 | **#18** Registry redesign — multi-kind models | blocked on #16 |
-| 4 | **#20** STT package — `listen/` + `listen/moonshine/` | blocked on #18 |
-| 5 | **#19** CLI redesign — subcommand-per-modality | blocked on #17, #20 |
-| 6 | **#21** Server API — per-modality pools | **done** |
+- **#24 Sentence chunking** — Kokoro has a 510-token hard limit (~200-300 chars).
+  Long text silently fails. Need transparent chunking in `Speak()`.
+- **#25 Text normalizer** — Pure Go `normalize/` package. Expand acronyms,
+  numbers, currency, dates, symbols before phonemization. Proven via Ruby spike
+  (`tmp/normalize.rb`) — acronyms round-trip dramatically better after normalization.
 
 ### Also open
 
-- **#22 Bundle espeak-ng** — eliminate the only system dependency. Download
-  espeak-ng binary + data alongside ORT/models. Truly single-command install.
-- **#23 OpenAI remote engines** — `OPENAI_API_KEY` unlocks remote TTS (OpenAI),
-  STT (Whisper), and future LLM. Works with OpenRouter/Ollama via
-  `OPENAI_BASE_URL`. Makes cattery work with zero downloads if you have an API key.
-- License compliance follow-through (#07) — artefacts-repo notices +
-  release-packaging follow-up remain. Repo code is now Apache-2.0.
-- Server auth (#11) — after API redesign lands
-- LLM proxy (#12) — unified AI backend (`cattery think`), partly covered by #23
+- **#22 Bundle espeak-ng** — eliminate the only system dependency
+- **#23 OpenAI remote engines** — `OPENAI_API_KEY` unlocks remote TTS/STT
+- **#11 Server auth** — API redesign landed, auth can follow
+- **#12 LLM proxy** — unified AI backend (`cattery think`), partly covered by #23
+- **#07** License compliance follow-through
 - Vision: single-binary conversational system (STT → LLM → TTS) for indie builders on Pi4
 
 ## Key Decisions Made
