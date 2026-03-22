@@ -12,6 +12,7 @@ import (
 
 	"github.com/jikkuatwork/cattery/audio"
 	"github.com/jikkuatwork/cattery/download"
+	"github.com/jikkuatwork/cattery/normalize"
 	"github.com/jikkuatwork/cattery/paths"
 	"github.com/jikkuatwork/cattery/phonemize"
 	"github.com/jikkuatwork/cattery/registry"
@@ -112,6 +113,10 @@ func (e *Engine) Speak(w io.Writer, text string, opts speak.Options) error {
 	}
 
 	text = strings.TrimSpace(text)
+	if text == "" {
+		return fmt.Errorf("text is empty")
+	}
+	text = normalize.Normalize(text)
 	if text == "" {
 		return fmt.Errorf("text is empty")
 	}
