@@ -37,11 +37,12 @@ type Result struct {
 }
 
 type pendingDownload struct {
-	label  string
-	url    string
-	dest   string
-	size   int64
-	sha256 string
+	label   string
+	url     string
+	dest    string
+	size    int64
+	sha256  string
+	isVoice bool
 }
 
 // Ensure checks if a model's required files exist, downloading what is missing.
@@ -67,20 +68,37 @@ func Ensure(dataDir string, model *registry.Model, voices ...*registry.Voice) (*
 		return result, nil
 	}
 
-	var (
-		labels []string
-		needed int64
-	)
+	var needed int64
 	if needORT {
-		labels = append(labels, "Runtime")
 		needed += defaultORTBytes
 	}
 	for _, item := range pending {
-		labels = append(labels, item.label)
 		needed += item.size
 	}
 	if err := checkDiskSpace(dataDir, needed); err != nil {
 		return nil, err
+	}
+
+	// Split pending into model files and voice files.
+	var modelPending, voicePending []pendingDownload
+	for _, item := range pending {
+		if item.isVoice {
+			voicePending = append(voicePending, item)
+		} else {
+			modelPending = append(modelPending, item)
+		}
+	}
+
+	// Build label list for alignment (voices get one "Voices" label).
+	var labels []string
+	if needORT {
+		labels = append(labels, "Runtime")
+	}
+	for _, item := range modelPending {
+		labels = append(labels, item.label)
+	}
+	if len(voicePending) > 0 {
+		labels = append(labels, "Voices")
 	}
 
 	style := &barStyle{labelWidth: maxLen(labels)}
@@ -93,9 +111,15 @@ func Ensure(dataDir string, model *registry.Model, voices ...*registry.Voice) (*
 		result.ORTLib = lib
 	}
 
-	for _, item := range pending {
+	for _, item := range modelPending {
 		if err := downloadWithBar(style, item.label, item.url, item.dest, item.size, item.sha256); err != nil {
 			return nil, fmt.Errorf("download %s: %w", item.label, err)
+		}
+	}
+
+	if len(voicePending) > 0 {
+		if err := downloadVoicesBatch(style, voicePending); err != nil {
+			return nil, err
 		}
 	}
 
@@ -143,11 +167,12 @@ func pendingModelDownloads(result *Result, dataDir string, model *registry.Model
 			continue
 		}
 		pending = append(pending, pendingDownload{
-			label:  voice.Name,
-			url:    artefactURL(model, voice.File),
-			dest:   dest,
-			size:   voice.File.SizeBytes,
-			sha256: voice.File.SHA256,
+			label:   voice.Name,
+			url:     artefactURL(model, voice.File),
+			dest:    dest,
+			size:    voice.File.SizeBytes,
+			sha256:  voice.File.SHA256,
+			isVoice: true,
 		})
 	}
 
@@ -233,6 +258,64 @@ func downloadWithBar(style *barStyle, label, url, destPath string, expectedSize 
 	_, copyErr := io.Copy(io.MultiWriter(f, b), resp.Body)
 	f.Close()
 	b.finish()
+
+	if copyErr != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("download interrupted: %w", copyErr)
+	}
+
+	if expectedSHA256 != "" {
+		if err := verifyChecksum(tmpPath, expectedSHA256); err != nil {
+			os.Remove(tmpPath)
+			return err
+		}
+	}
+
+	return os.Rename(tmpPath, destPath)
+}
+
+// downloadVoicesBatch downloads all voices showing a single "Voices  3 / 27" counter bar.
+func downloadVoicesBatch(style *barStyle, items []pendingDownload) error {
+	total := int64(len(items))
+	b := newBar("Voices", total, false, style)
+	for i, item := range items {
+		if err := downloadQuiet(item.url, item.dest, item.sha256); err != nil {
+			b.finish()
+			return fmt.Errorf("download voice %s: %w", item.label, err)
+		}
+		b.set(int64(i + 1))
+	}
+	b.finish()
+	return nil
+}
+
+// downloadQuiet downloads a file without any progress display.
+func downloadQuiet(url, destPath, expectedSHA256 string) error {
+	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		return err
+	}
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("not found (404): %s", url)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
+	}
+
+	tmpPath := destPath + ".tmp"
+	f, err := os.Create(tmpPath)
+	if err != nil {
+		return err
+	}
+
+	_, copyErr := io.Copy(f, resp.Body)
+	f.Close()
 
 	if copyErr != nil {
 		os.Remove(tmpPath)
