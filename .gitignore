@@ -4,3 +4,4 @@ models-data/
 /stt-spike
 /cattery
 tmp/
+.codex/settings.local.json

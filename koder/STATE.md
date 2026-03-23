@@ -110,6 +110,8 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [25](issues/25_text_normalizer.md) | Pure Go text normalizer for TTS preprocessing | **done** | P1 |
 | [26](issues/26_stt_audio_chunking.md) | STT audio chunking to prevent hallucination | **done** | P1 |
 | [27](issues/27_bounded_memory_streaming.md) | Bounded-memory streaming for TTS/STT | open (TTS + STT streaming done) | P1 |
+| [28](issues/28_rss_validation.md) | RSS validation: TTS accumulation + STT baseline overage | open | P1 |
+| [29](issues/29_fix_memtest.md) | Fix memtest suite: test artifacts causing false failures and OOM risk | open | P1 |
 
 ## What's Next
 
