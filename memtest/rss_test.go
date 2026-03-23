@@ -25,9 +25,12 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -96,6 +99,7 @@ func TestMain(m *testing.M) {
 // TestTTSPeakRSS_Short verifies that a single-chunk TTS run stays within the
 // memory threshold. This is the baseline — multi-chunk must not exceed it.
 func TestTTSPeakRSS_Short(t *testing.T) {
+	drainMemory(t)
 	peak := runTTS(t, shortText)
 	t.Logf("TTS short: peak RSS %d MB (threshold %d MB, %d chars)", peak, ttsPeakRSSThresholdMB, len(shortText))
 	assertRSS(t, "TTS short", peak, ttsPeakRSSThresholdMB)
@@ -104,8 +108,17 @@ func TestTTSPeakRSS_Short(t *testing.T) {
 // TestTTSPeakRSS_Long verifies that multi-chunk TTS does not accumulate PCM.
 // If streaming is broken, this will exceed the threshold by roughly N×chunk_rss.
 func TestTTSPeakRSS_Long(t *testing.T) {
+	drainMemory(t)
+	shortPeak := runTTS(t, shortText)
+	drainMemory(t)
 	peak := runTTS(t, longText)
 	t.Logf("TTS long:  peak RSS %d MB (threshold %d MB, %d chars)", peak, ttsPeakRSSThresholdMB, len(longText))
+	if shortPeak > 0 {
+		ratio := float64(peak) / float64(shortPeak)
+		t.Logf("TTS long/short RSS ratio: %.2fx (%d MB / %d MB)", ratio, peak, shortPeak)
+	} else {
+		t.Logf("TTS long/short RSS ratio: unavailable (short baseline measured 0 MB)")
+	}
 	assertRSS(t, "TTS long", peak, ttsPeakRSSThresholdMB)
 }
 
@@ -114,6 +127,7 @@ func TestTTSPeakRSS_Long(t *testing.T) {
 // TestSTTPeakRSS_Short verifies that transcribing a short clip stays within
 // the memory threshold. This is the baseline for the STT path.
 func TestSTTPeakRSS_Short(t *testing.T) {
+	drainMemory(t)
 	peak := runSTT(t, 25) // 25s — single chunk
 	t.Logf("STT short: peak RSS %d MB (threshold %d MB, 25s audio)", peak, sttPeakRSSThresholdMB)
 	assertRSS(t, "STT short", peak, sttPeakRSSThresholdMB)
@@ -124,6 +138,7 @@ func TestSTTPeakRSS_Short(t *testing.T) {
 // on top of the model footprint — noticeable but not catastrophic alone.
 // More importantly it validates that the sliding-window path runs correctly.
 func TestSTTPeakRSS_Long(t *testing.T) {
+	drainMemory(t)
 	peak := runSTT(t, 180) // 180s = 3 min — multiple chunks
 	t.Logf("STT long:  peak RSS %d MB (threshold %d MB, 180s audio)", peak, sttPeakRSSThresholdMB)
 	assertRSS(t, "STT long", peak, sttPeakRSSThresholdMB)
@@ -158,9 +173,15 @@ func runTTS(t *testing.T, text string) int64 {
 	voiceID := firstAvailableVoice(t, eng.Voices(), dataDir, model.ID)
 
 	stop, peakMB := startRSSPoller()
-	t.Cleanup(stop)
+	defer stop()
 
-	if err := eng.Speak(io.Discard, text, speak.Options{
+	wavOut, err := os.CreateTemp(t.TempDir(), "memtest-*.wav")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	defer wavOut.Close()
+
+	if err := eng.Speak(wavOut, text, speak.Options{
 		Voice: voiceID,
 		Speed: 1.0,
 	}); err != nil {
@@ -210,6 +231,12 @@ func assertRSS(t *testing.T, label string, peak, threshold int64) {
 	}
 }
 
+func drainMemory(t *testing.T) {
+	t.Helper()
+	runtime.GC()
+	debug.FreeOSMemory()
+}
+
 // firstAvailableVoice returns the ID of the first voice whose .bin file exists.
 func firstAvailableVoice(t *testing.T, voices []speak.Voice, dataDir, modelID string) string {
 	t.Helper()
@@ -227,7 +254,7 @@ func firstAvailableVoice(t *testing.T, voices []speak.Voice, dataDir, modelID st
 // every 50ms and tracks peak VmRSS. Returns a stop func (safe to call multiple
 // times) and a peakMB func that returns the highest RSS seen so far.
 func startRSSPoller() (stop func(), peakMB func() int64) {
-	var peak int64
+	var peak atomic.Int64
 	done := make(chan struct{})
 	var once sync.Once
 
@@ -239,15 +266,15 @@ func startRSSPoller() (stop func(), peakMB func() int64) {
 			case <-done:
 				return
 			case <-ticker.C:
-				if rss := currentRSSMB(); rss > peak {
-					peak = rss
+				if rss := currentRSSMB(); rss > peak.Load() {
+					peak.Store(rss)
 				}
 			}
 		}
 	}()
 
 	stop = func() { once.Do(func() { close(done) }) }
-	peakMB = func() int64 { return peak }
+	peakMB = func() int64 { return peak.Load() }
 	return
 }
 
@@ -281,13 +308,13 @@ func syntheticWAV(durationSec, sampleRate int) io.Reader {
 	binary.Write(&hdr, binary.LittleEndian, uint32(36+dataBytes))
 	hdr.WriteString("WAVE")
 	hdr.WriteString("fmt ")
-	binary.Write(&hdr, binary.LittleEndian, uint32(16))             // fmt chunk size
-	binary.Write(&hdr, binary.LittleEndian, uint16(1))              // PCM
-	binary.Write(&hdr, binary.LittleEndian, uint16(1))              // mono
-	binary.Write(&hdr, binary.LittleEndian, uint32(sampleRate))     // sample rate
-	binary.Write(&hdr, binary.LittleEndian, uint32(sampleRate*2))   // byte rate
-	binary.Write(&hdr, binary.LittleEndian, uint16(2))              // block align
-	binary.Write(&hdr, binary.LittleEndian, uint16(16))             // bits per sample
+	binary.Write(&hdr, binary.LittleEndian, uint32(16))           // fmt chunk size
+	binary.Write(&hdr, binary.LittleEndian, uint16(1))            // PCM
+	binary.Write(&hdr, binary.LittleEndian, uint16(1))            // mono
+	binary.Write(&hdr, binary.LittleEndian, uint32(sampleRate))   // sample rate
+	binary.Write(&hdr, binary.LittleEndian, uint32(sampleRate*2)) // byte rate
+	binary.Write(&hdr, binary.LittleEndian, uint16(2))            // block align
+	binary.Write(&hdr, binary.LittleEndian, uint16(16))           // bits per sample
 	hdr.WriteString("data")
 	binary.Write(&hdr, binary.LittleEndian, uint32(dataBytes))
 
