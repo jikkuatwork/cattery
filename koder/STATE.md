@@ -141,7 +141,8 @@ infra in `plan 30`.
 - **No pure Go ONNX**: GoMLX/gonnx lack FFT/ISTFT ops. ORT via dlopen is the only path.
 - **Download on first run**: binary stays ~8MB, while ORT/model/voice artefacts are fetched as needed. `espeak-ng` stays external.
 - **Separate artefacts repo**: `cattery-artefacts` holds binaries via Git LFS. No auth.
-- **ORT from Microsoft**: not mirrored — their GitHub Release URLs are permanent.
+- **ORT from Microsoft**: not mirrored — their GitHub Release URLs are permanent. Currently on v1.24.4. Linux amd64 asset uses `x64` (not `x86_64`) in filename; macOS ships arm64-only since ORT 1.20+; arch mapping is per-OS in `download/download.go`.
+- **`scripts/install.sh`**: builds `./cmd/cattery` and drops it into `$HOME/.local/bin` (overrideable via `INSTALL_DIR`). Run after every local build.
 - **espeak-ng via os/exec**: simplest phonemizer. WASM embed deferred.
 - **Random voice by default**: no voice flag = random pick; `--male`/`--female` to filter.
 - **Full voice set by default**: voice files are small (~510KB each), so the UX is optimized around fetching the whole set rather than micromanaging individual voices.

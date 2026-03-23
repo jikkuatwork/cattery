@@ -338,14 +338,6 @@ func downloadORT(ortDir, version string, style *barStyle) (string, error) {
 		return "", err
 	}
 
-	arch := runtime.GOARCH
-	if arch == "arm64" {
-		arch = "aarch64"
-	}
-	if arch == "amd64" {
-		arch = "x86_64"
-	}
-
 	var (
 		url     string
 		libName string
@@ -353,12 +345,19 @@ func downloadORT(ortDir, version string, style *barStyle) (string, error) {
 
 	switch runtime.GOOS {
 	case "linux":
+		arch := runtime.GOARCH
+		if arch == "amd64" {
+			arch = "x64"
+		} else if arch == "arm64" {
+			arch = "aarch64"
+		}
 		url = fmt.Sprintf("https://github.com/microsoft/onnxruntime/releases/download/v%s/onnxruntime-linux-%s-%s.tgz",
 			version, arch, version)
 		libName = fmt.Sprintf("libonnxruntime.so.%s", version)
 	case "darwin":
-		url = fmt.Sprintf("https://github.com/microsoft/onnxruntime/releases/download/v%s/onnxruntime-osx-%s-%s.tgz",
-			version, arch, version)
+		// macOS ships arm64 only since ORT 1.20+
+		url = fmt.Sprintf("https://github.com/microsoft/onnxruntime/releases/download/v%s/onnxruntime-osx-arm64-%s.tgz",
+			version, version)
 		libName = fmt.Sprintf("libonnxruntime.%s.dylib", version)
 	default:
 		return "", fmt.Errorf("unsupported platform: %s/%s", runtime.GOOS, runtime.GOARCH)
@@ -384,7 +383,7 @@ func downloadORT(ortDir, version string, style *barStyle) (string, error) {
 
 	if resp.StatusCode == http.StatusNotFound {
 		tmpFile.Close()
-		return "", fmt.Errorf("ONNX Runtime not available for %s/%s at version %s", runtime.GOOS, arch, version)
+		return "", fmt.Errorf("ONNX Runtime not available for %s/%s at version %s", runtime.GOOS, runtime.GOARCH, version)
 	}
 	if resp.StatusCode != http.StatusOK {
 		tmpFile.Close()

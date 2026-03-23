@@ -62,7 +62,7 @@ type Voice struct {
 const (
 	kokoroModelID        = "kokoro-82m-v1.0"
 	moonshineModelID     = "moonshine-tiny-v1.0"
-	ortModelID           = "ort-1.24.1"
+	ortModelID           = "ort-1.24.4"
 	defaultVoiceSize     = 522_240
 	moonshineHFBaseURL   = "https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/main"
 	moonshineONNXBaseURL = moonshineHFBaseURL + "/onnx"
@@ -171,7 +171,7 @@ var models = []*Model{
 		Name:        "ONNX Runtime",
 		Description: "Shared runtime for local ONNX models",
 		Meta: map[string]string{
-			"version": "1.24.1",
+			"version": "1.24.4",
 		},
 	},
 }
