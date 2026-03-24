@@ -115,19 +115,23 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 
 ## What's Next
 
-**Plans 28 and 29 landed** — long-form TTS and STT now keep the live audio
-path bounded. Kokoro streams chunk PCM into a WAV sink, and Moonshine now
-streams PCM decode + resample into a sliding 16 kHz window instead of loading
-and resampling the full clip up front. The remaining #27 work is chunk-size
-infra in `plan 30`.
+**Plans 28–30 landed** — TTS streaming, STT streaming, and chunk-size infra
+are all in. Three plans are queued to close out the memory validation work:
 
-### Memory / deployment
+### Memory validation pipeline (plan 31 → 32 → 33)
 
-- **#27 Bounded-memory streaming** — the code path is now landed end-to-end:
-  TTS streams WAV output, STT streams decode/resample, and shared chunk-size
-  infra resolves `flag > env > auto` with a low-memory warning at `<= 512 MB`.
-  Remaining work is empirical RSS / Pi4 / 1 GB validation before closing the
-  issue.
+- **Plan 31** (#29) — fix memtest harness: add `malloc_trim` to
+  `drainMemory()`, add STT ratio logging. Two of three findings already fixed
+  in `ddad3cc`; one remaining.
+- **Plan 32** (#28) — RSS investigation: collect post-fix baselines, diagnose
+  TTS long/short ratio and STT baseline, calibrate thresholds.
+- **Plan 33** (#27 close-out) — empirical validation under cgroup memory
+  limits (4G, 1G, 512M), then close #27.
+
+Execute via harnex: spawn a Codex worker per plan in a worktree, send the plan
+file as the task, wait for completion, review before starting the next.
+
+### Also open
 
 ### Also open
 
