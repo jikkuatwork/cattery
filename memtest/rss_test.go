@@ -26,7 +26,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -139,8 +138,14 @@ func TestSTTPeakRSS_Short(t *testing.T) {
 // More importantly it validates that the sliding-window path runs correctly.
 func TestSTTPeakRSS_Long(t *testing.T) {
 	drainMemory(t)
+	shortPeak := runSTT(t, 25)
+	drainMemory(t)
 	peak := runSTT(t, 180) // 180s = 3 min — multiple chunks
 	t.Logf("STT long:  peak RSS %d MB (threshold %d MB, 180s audio)", peak, sttPeakRSSThresholdMB)
+	if shortPeak > 0 {
+		ratio := float64(peak) / float64(shortPeak)
+		t.Logf("STT long/short RSS ratio: %.2fx (%d MB / %d MB)", ratio, peak, shortPeak)
+	}
 	assertRSS(t, "STT long", peak, sttPeakRSSThresholdMB)
 }
 
@@ -234,7 +239,7 @@ func assertRSS(t *testing.T, label string, peak, threshold int64) {
 func drainMemory(t *testing.T) {
 	t.Helper()
 	runtime.GC()
-	debug.FreeOSMemory()
+	ort.Drain()
 }
 
 // firstAvailableVoice returns the ID of the first voice whose .bin file exists.

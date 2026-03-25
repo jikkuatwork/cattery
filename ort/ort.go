@@ -40,6 +40,13 @@ func Init(libPath string) error {
 	return ortgo.InitializeEnvironment()
 }
 
+// Drain returns free C heap pages and Go heap pages to the OS without
+// destroying the ONNX Runtime environment.
+func Drain() {
+	C.malloc_trim(0)
+	debug.FreeOSMemory()
+}
+
 // Shutdown destroys the ONNX Runtime environment and unloads the shared library
 // via dlclose. Calls malloc_trim to return freed C heap pages to the OS.
 // Can be followed by Init to reload.
@@ -47,10 +54,7 @@ func Shutdown() {
 	if ortgo.IsInitialized() {
 		ortgo.DestroyEnvironment()
 	}
-	// Force glibc to release free heap pages back to the OS.
-	C.malloc_trim(0)
-	// Also release Go's unused memory.
-	debug.FreeOSMemory()
+	Drain()
 }
 
 // IsInitialized returns whether the ORT environment is loaded.
