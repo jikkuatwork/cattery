@@ -93,7 +93,7 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [08](issues/08_stt_module.md) | Speech-to-text module | **done** (superseded by #16-#21) | P1 |
 | [09](issues/09_pretty_help.md) | Pretty CLI help | **done** (subsumed by #19) | P3 |
 | [10](issues/10_server_api_audit.md) | Server API audit for apps | **done** (subsumed by #21) | P2 |
-| [11](issues/11_server_auth.md) | Optional server auth | open | P2 |
+| [11](issues/11_server_auth.md) | Optional server auth | **done** (plan 34) | P2 |
 | [12](issues/12_llm_proxy.md) | LLM proxy (Ollama/OpenRouter) | open | P2 |
 | [13](issues/13_local_4b_model.md) | Local 4B LLM via ONNX | open | P3 |
 | [14](issues/14_web_ui.md) | Embedded web UI | open | P3 |
@@ -112,19 +112,26 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [27](issues/27_bounded_memory_streaming.md) | Bounded-memory streaming for TTS/STT | **done** (native memtest validated; 4 GB / 1 GB cgroup run requires manual host) | P1 |
 | [28](issues/28_rss_validation.md) | RSS validation: TTS accumulation + STT baseline overage | **done** | P1 |
 | [29](issues/29_fix_memtest.md) | Fix memtest suite: test artifacts causing false failures and OOM risk | **done** | P1 |
+| [30](issues/30_rename_verbs.md) | Rename speak/listen → tts/stt/llm/lvm | open | P2 |
+| [31](issues/31_simplified_ux.md) | Simplified default UX with --advanced escape hatch | open | P2 |
 
 ## What's Next
 
 **Memory validation pipeline complete** (plans 31–33). #27, #28, #29 closed.
 Remaining cgroup validation (4G/1G/512M) is manual — see `scripts/memtest-constrained.sh`.
 
+**#11 Server auth done** (plan 34). `--auth` flag, `keys.json`, Bearer middleware, per-key rate limiting.
+#23 OpenAI remote engines **deferred** — staying pure local for now.
+
 ### Open
 
+
 - **#22 Bundle espeak-ng** — eliminate the only system dependency
-- **#23 OpenAI remote engines** — `OPENAI_API_KEY` unlocks remote TTS/STT
-- **#11 Server auth** — API redesign landed, auth can follow
-- **#12 LLM proxy** — unified AI backend (`cattery think`), partly covered by #23
+- **#30 Rename verbs** — speak/listen → tts/stt across CLI, API, packages
+- **#31 Simplified UX** — hide `list` and model selection by default, `--advanced` to reveal
+- **#12 LLM proxy** — unified AI backend (`cattery think`)
 - **#07** License compliance follow-through
+- ~~**#23 OpenAI remote engines**~~ — deferred (pure local focus)
 - Vision: single-binary conversational system (STT → LLM → TTS) for indie builders on Pi4
 
 ## Key Decisions Made
@@ -176,6 +183,8 @@ Remaining cgroup validation (4G/1G/512M) is manual — see `scripts/memtest-cons
 - **Remote models are just models**: no `--remote` flag. OpenAI engines are registered models (`openai-tts-1`, `openai-whisper-1`) selected via `--model`. Remote models only appear in `cattery list` when `OPENAI_API_KEY` is set. Default is always local — no accidental API spend. `OPENAI_BASE_URL` supports OpenRouter, Ollama, Azure. No SDK — pure `net/http`.
 - **Dual-mode operation**: local models (Pi4, offline, free) OR remote APIs (zero download, higher quality, paid). Same CLI, same server, same `speak.Engine`/`listen.Engine` interface.
 - **Numeric indices everywhere**: models and voices addressed by stable per-kind numeric index in CLI (`--voice 4 --model 1`). Slugs exist but are never required input. API responses always include both index and slug. Indices are 1-based, stable, never reassigned.
+- **Server auth is opt-in**: `--auth` flag enables Bearer token auth with `~/.cattery/keys.json`. Off by default — zero overhead. Keys are `cat_`-prefixed, SHA-256 hashed at rest, managed via `cattery keys create/list/revoke/delete`. Per-key rate limiting (fixed-window, in-memory). `/v1/status` always public. Hot-reloads keys on file change.
+- **Pure local focus (2026-03)**: remote engine support (#23) deferred. Cattery stays local-only for now. Auth, rate limiting, and API design assume local inference.
 - **Repo-local Codex workflow**: `.codex/skills/open` and `.codex/skills/close` are tracked in-repo, not globally. `open` should read `koder/STATE.md` first after restarts; `close` should sync `koder/STATE.md`, validate changed local skills, and commit a coherent session when explicitly invoked.
 
 ## Research
