@@ -15,95 +15,91 @@ created: 2026-03-23
 
 ## Background
 
-The `memtest` suite added in #27 (`go test -tags memtest ./memtest/ -v`) ran
-for the first time on this machine (ARM64 VM, 16 GB). Results were unexpected
-in two ways.
+Plan 31 fixed the memtest harness. Re-running
+`go test -tags memtest ./memtest/ -v -timeout 600s` on 2026-03-25 produced
+lower but still non-trivial long/short deltas.
 
 ## Observed results
 
-| Test | Peak RSS | Threshold | Result |
+| Test | Peak RSS | Threshold at run time | Result |
 |---|---|---|---|
-| TTS short (~50 words, 1 chunk) | 481 MB | 525 MB | PASS |
-| TTS long (~400 words, 8+ chunks) | 995 MB | 525 MB | **FAIL** |
-| STT short (25s audio, 1 chunk) | 470 MB | 375 MB | **FAIL** |
-| STT long (180s audio, 6 chunks) | 739 MB | 375 MB | **FAIL** |
+| TTS short (~50 words, 1 chunk) | 479 MB | 525 MB | PASS |
+| TTS long (~400 words, 6 chunks) | 888 MB | 525 MB | **FAIL** |
+| STT short (25s audio, 1 chunk) | 274 MB | 375 MB | PASS |
+| STT long (180s audio, 7 chunks) | 449 MB | 375 MB | **FAIL** |
 
-Thresholds are 1.5× the acceptance targets from #27 (350 MB TTS, 250 MB STT).
+The long tests re-measure the short path inside the same test before running
+the long path. Those in-test baselines were 527 MB for TTS and 266 MB for STT,
+so both reported long/short ratios were 1.69x.
 
-## Concern 1 — TTS multi-chunk accumulation
+## Findings (2026-03-25)
 
-TTS short peaks at 481 MB; TTS long peaks at 995 MB — a 2× ratio. With correct
-streaming (plan 28), peak RSS for the long run should be roughly equal to the
-short run, since each chunk's PCM is written to the WAV sink and the tensor
-memory freed before the next chunk begins.
+### TTS root cause
 
-A 2× ratio strongly suggests either:
-- chunk PCM tensors from inference are being held in memory across chunk
-  boundaries (ORT or Go GC hasn't released them), OR
-- the WAV writer is accumulating PCM in a buffer rather than discarding it
-  chunk by chunk, OR
-- two consecutive chunks' allocations overlap in the RSS snapshot because GC
-  has not run malloc_trim between chunks
+The seekable-sink fix from plan 31 did remove the old `io.Discard` / temp-file
+artifact. The remaining TTS delta is not PCM/WAV accumulation.
 
-Needs code-level investigation in `speak/kokoro/kokoro.go` and `audio/wav.go`
-to confirm whether PCM is genuinely freed between chunks or merely marked free
-but not returned to the OS.
+Chunk-level instrumentation showed:
 
-## Concern 2 — STT baseline higher than estimated
+- The short fixture uses only 213 tokens in a single chunk and peaks at
+  roughly 487 MB in direct runs.
+- The long fixture's six chunks are much larger: 366, 359, 428, 386, 395, and
+  385 tokens. RSS jumped to ~627 MB on chunk 1, ~830 MB on the 428-token
+  chunk, then plateaued around ~841 MB.
+- Forcing `runtime.GC()` + `malloc_trim` after every chunk only reduced the
+  long peak from ~841 MB to ~828 MB. That rules out ordinary Go-heap timing as
+  the main cause.
+- Doubling `longText` to 12 chunks did not show PCM-style linear growth per
+  chunk. Instead it produced a second step-up at chunk 7/8 and then another
+  plateau around ~1196 MB. That pattern matches native allocator/session
+  retention, not WAV output buffering.
+- Disabling ORT's CPU arena made TTS dramatically worse (~2941 MB peak for the
+  same long run), so the arena is not the root problem. It is reusing some
+  memory, not causing the whole overage.
 
-The original #27 estimate was ≤190 MB for STT (one chunk). Actual short-clip
-peak is 470 MB — 2.5× the estimate. This may mean:
-- The original 190 MB was measured with `runtime.GC()` + `malloc_trim` forced
-  between operations, not during live inference
-- Moonshine's encoder/decoder sessions retain larger activation buffers than
-  expected
-- The test baseline RSS (process startup + ORT init) is much higher on this VM
-  than the original measurement context
+Conclusion: the remaining TTS overage is a combination of an undersized short
+fixture (213 tokens vs 359-428-token long chunks) and ONNX Runtime retaining
+native allocations across repeated `Run()` calls within the same session. The
+streaming WAV writer is not implicated.
 
-The STT long/short ratio is 1.57× (739 / 470), which is less alarming than
-TTS, but still indicates some accumulation across chunks.
+### STT root cause
 
-## Questions to resolve
+The STT baseline overage is real, but it is mostly allocator/session overhead
+rather than full-audio accumulation.
 
-1. **TTS**: Is the 2× long/short RSS ratio caused by genuine PCM accumulation,
-   or by GC timing (freed memory not yet returned to OS between chunks)?
-   - Does `runtime.GC()` + `malloc_trim` after each chunk collapse the ratio?
-   - Does the ratio grow beyond 2× with even longer text (3×, 4×)?
+Instrumentation showed:
 
-2. **STT**: Is 470 MB an accurate single-chunk baseline, or is ORT retaining
-   encoder KV-cache or activation tensors across decode steps?
-   - What is the pre-inference RSS (after engine load, before first chunk)?
+- Pre-inference RSS after `moonshine.New()` but before `Transcribe()` was only
+  ~120-128 MB.
+- The short memtest clip uses a single 25s chunk (400k samples). In direct
+  runs it moved from ~130 MB before inference to ~256 MB after inference, with
+  a peak around ~243-274 MB depending on process state.
+- The long memtest run uses 30s chunks (480k samples). RSS rose to ~289 MB on
+  chunk 1, ~367 MB on chunk 2, then plateaued around ~367-371 MB through the
+  rest of the run.
+- Disabling ORT's CPU arena dropped the short post-inference RSS to ~175 MB
+  and the short peak to ~204 MB, which is close to the original 190 MB
+  estimate. That indicates the original estimate likely excluded arena/process
+  overhead or was measured under different allocator conditions.
 
-3. **Thresholds**: Should the memtest thresholds be calibrated to actual
-   observed baselines rather than the original estimates?
+Conclusion: STT is not retaining the full audio input anymore. The higher
+single-chunk baseline comes from process startup + model load (~120-128 MB)
+plus ORT arena growth during encoder/decoder inference. The long/short delta
+is amplified because the short fixture is 25s while the streaming path uses 30s
+chunks for long audio.
 
-## Suggested investigation approach
+### Threshold calibration
 
-- Add pre/post RSS logging inside the chunk loop (without changing behavior)
-  to see whether RSS grows monotonically or fluctuates per chunk
-- Extend `longText` in the memtest suite to 2×, 3× length and plot RSS vs
-  chunk count to distinguish accumulation from a high-but-flat baseline
-- For TTS: check whether `io.Discard` as the WAV sink (used in tests) triggers
-  the temp-file fallback path in `audio.WAVWriter`, which spools PCM to disk
-  and writes all at once — this would explain the linear RSS growth
+`memtest/rss_test.go` now calibrates thresholds from the observed short peaks
+instead of the original issue targets:
 
-## Note on the temp-file fallback
-
-`audio.WAVWriter` has two paths: seekable (patch header in place, flush
-per-chunk) and non-seekable (spool PCM to a temp file, write WAV at close).
-`io.Discard` is not seekable. If the non-seekable path still accumulates PCM
-in memory (or writes it to a temp file that grows proportionally), that would
-explain the test results without implicating actual TTS inference.
-
-The fix in that case would be either:
-- Make the non-seekable path truly streaming (PCM goes to temp file, not RAM)
-- Or use a `bytes.Buffer` wrapping a seek-capable writer in tests instead of
-  `io.Discard`
+- TTS threshold: 479 MB × 1.3 = 623 MB
+- STT threshold: 274 MB × 1.3 = 357 MB
 
 ## Acceptance criteria
 
-- [ ] Root cause of TTS 2× ratio identified and documented
-- [ ] Root cause of STT 470 MB baseline identified and documented
-- [ ] memtest thresholds updated to reflect real-world measurements
-- [ ] At minimum, TTS long RSS / TTS short RSS ratio ≤ 1.2 (within noise)
-- [ ] STT long RSS / STT short RSS ratio ≤ 1.2
+- [x] Root cause of TTS 2× ratio identified and documented
+- [x] Root cause of STT 470 MB baseline identified and documented
+- [x] memtest thresholds updated to reflect real-world measurements
+- [x] Won't fix: TTS long RSS / TTS short RSS ratio ≤ 1.2 is not achievable with the current fixtures because long chunks are materially larger than the short fixture and ONNX Runtime retains native allocations across repeated `Run()` calls; this is not evidence of streaming regression.
+- [x] Won't fix: STT long RSS / STT short RSS ratio ≤ 1.2 is not achievable with the current fixtures because the long path uses larger 30s chunks than the 25s short fixture and ONNX Runtime session retention inflates the ratio; this is not evidence of streaming regression.

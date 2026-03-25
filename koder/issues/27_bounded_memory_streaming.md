@@ -62,6 +62,13 @@ synthesis should use the same memory as a 10-second one.
   consumes the resolved duration; Kokoro accepts it as a no-op for interface
   symmetry; low-memory speak no longer hard-rejects; and TTS/STT entrypoints
   normalize OOM-style failures into clean single-line errors.
+- 2026-03-25: plan 32 reran the fixed memtest harness.
+  `go test -tags memtest ./memtest/ -v -timeout 600s` measured TTS short
+  479 MB, TTS long 888 MB, STT short 274 MB, and STT long 449 MB. The
+  streaming fixes removed full-output/full-input buffering, but RSS still
+  reflects ONNX Runtime session retention and non-comparable short fixtures
+  (TTS short text under-fills the token budget; STT short uses 25s while long
+  audio uses 30s chunks).
 - Remaining work is empirical RSS / Pi4 / 1 GB validation before closing the
   issue.
 
@@ -151,15 +158,15 @@ The Pi4 constraint (4GB, 4-core A72) sets the floor, not the ceiling:
 
 ## Acceptance criteria
 
-- [ ] 3-min TTS synthesis peaks at ≤350MB RSS on this VM (vs 880MB today)
-- [ ] 3-min STT transcription peaks at ≤250MB RSS (vs 424MB today)
+- [ ] 3-min TTS synthesis peaks at ≤350MB RSS on this VM. 2026-03-25 memtest observed 888 MB with the fixed harness (short baseline 479 MB).
+- [ ] 3-min STT transcription peaks at ≤250MB RSS. 2026-03-25 memtest observed 449 MB with the fixed harness (short baseline 274 MB).
 - [ ] Pi4 4GB: both TTS and STT complete a 3-min clip without OOM or swap
 - [ ] 1GB VPS: STT completes a 3-min clip; TTS completes at least 1-min
 - [x] 512MB: warns on stderr but proceeds with 10s chunks; no panic/trace on OOM
 - [x] `--chunk-size 15s` works and reduces peak RSS further
 - [x] Auto-detect picks reasonable defaults on 512MB, 1GB, 4GB, 16GB systems
 - [x] All memory failures produce clean single-line errors, never stack traces
-- [ ] No regression on short audio (< 30s) — same path, same memory
+- [ ] No regression on short audio (< 30s) — same path, same memory. 2026-03-25 short-path peaks were 479 MB for TTS (~50 words) and 274 MB for STT (25s).
 - [x] `go build ./...` and `go vet ./...` pass
 
 ## File changes (likely)
