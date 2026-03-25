@@ -33,4 +33,7 @@ func TestLooksLikeCommandIncludesNewVerbs(t *testing.T) {
 	if !looksLikeCommand("listen") {
 		t.Fatal("expected listen to look like a command")
 	}
+	if !looksLikeCommand("keys") {
+		t.Fatal("expected keys to look like a command")
+	}
 }

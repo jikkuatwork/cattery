@@ -49,6 +49,8 @@ func run() error {
 		return cmdSpeak(args[1:])
 	case "listen":
 		return cmdListen(args[1:])
+	case "keys":
+		return cmdKeys(args[1:])
 	case "serve":
 		return cmdServe(args[1:])
 	case "list":
@@ -124,6 +126,8 @@ func cmdServe(args []string) error {
 			}
 		case "--keep-alive":
 			cfg.KeepAlive = true
+		case "--auth":
+			cfg.Auth = true
 		case "--chunk-size":
 			i++
 			if i >= len(args) {
@@ -150,7 +154,7 @@ func cmdServe(args []string) error {
 			}
 		default:
 			return fmt.Errorf(
-				"unknown flag %q for serve\nUsage: cattery serve [--port 7100] [--speak-workers 1] [--listen-workers 1] [--chunk-size 30s]",
+				"unknown flag %q for serve\nUsage: cattery serve [--port 7100] [--speak-workers 1] [--listen-workers 1] [--chunk-size 30s] [--auth]",
 				args[i],
 			)
 		}
@@ -536,6 +540,7 @@ Commands:
   speak        Text to speech
   listen       Speech to text
   serve        Start REST API server
+  keys         Manage API keys for --auth server mode
   list         List speak/listen models and voices
   status       Show system status and downloaded artefacts
   download     Pre-download local models and runtime
@@ -577,6 +582,14 @@ Server:
   cattery serve --max-chars 300        Shared char budget (bounds RAM)
   cattery serve --idle-timeout 600     Evict engines after N seconds idle
   cattery serve --keep-alive           Pre-warm engines, never evict
+  cattery serve --auth                 Require Bearer API keys except /v1/status
+
+Keys:
+  cattery keys create --name my-app
+  cattery keys create --name bot --rate 120
+  cattery keys list
+  cattery keys revoke cat_a1b2c3d4
+  cattery keys delete cat_a1b2c3d4
 
 Chunk size:
   CATTERY_CHUNK_SIZE   Shared override for speak, listen, and serve
@@ -898,7 +911,7 @@ func kindTitle(kind registry.Kind) string {
 }
 
 func commandNames() []string {
-	return []string{"speak", "listen", "serve", "list", "status", "download", "help", "version"}
+	return []string{"speak", "listen", "serve", "keys", "list", "status", "download", "help", "version"}
 }
 
 func resolveServeModelIndex(kind registry.Kind, ref string) (int, error) {
