@@ -2,9 +2,10 @@
 //
 // Endpoints:
 //
-//	POST /v1/speak    — synthesize text, returns WAV audio
-//	POST /v1/tts      — alias for /v1/speak
-//	POST /v1/listen   — transcribe audio, returns JSON
+//	POST /v1/tts      — synthesize text, returns WAV audio
+//	POST /v1/speak    — alias for /v1/tts
+//	POST /v1/stt      — transcribe audio, returns JSON
+//	POST /v1/listen   — alias for /v1/stt
 //	GET  /v1/models   — list available TTS + STT models
 //	GET  /v1/voices   — list available TTS voices
 //	GET  /v1/status   — server health and pool stats
@@ -27,44 +28,44 @@ import (
 	"time"
 
 	"github.com/jikkuatwork/cattery/download"
-	"github.com/jikkuatwork/cattery/listen"
 	"github.com/jikkuatwork/cattery/ort"
 	"github.com/jikkuatwork/cattery/paths"
 	"github.com/jikkuatwork/cattery/phonemize"
 	"github.com/jikkuatwork/cattery/preflight"
 	"github.com/jikkuatwork/cattery/registry"
-	"github.com/jikkuatwork/cattery/speak"
-	"github.com/jikkuatwork/cattery/speak/kokoro"
+	"github.com/jikkuatwork/cattery/stt"
+	"github.com/jikkuatwork/cattery/tts"
+	"github.com/jikkuatwork/cattery/tts/kokoro"
 )
 
 // Config holds server configuration.
 type Config struct {
-	Port          int
-	SpeakWorkers  int
-	ListenWorkers int
-	QueueMax      int
-	MaxChars      int
-	IdleTimeout   time.Duration
-	KeepAlive     bool
-	Auth          bool
-	SpeakModel    int
-	ListenModel   int
-	ChunkSize     time.Duration
+	Port        int
+	TTSWorkers  int
+	STTWorkers  int
+	QueueMax    int
+	MaxChars    int
+	IdleTimeout time.Duration
+	KeepAlive   bool
+	Auth        bool
+	TTSModel    int
+	STTModel    int
+	ChunkSize   time.Duration
 }
 
 // Server is the cattery HTTP server.
 type Server struct {
-	cfg         Config
-	mux         *http.ServeMux
-	queue       chan struct{}
-	startedAt   time.Time
-	dataDir     string
-	ortLib      string
-	authStore   *KeyStore
-	speakModel  *registry.Model
-	listenModel *registry.Model
-	speakPool   *Pool[speak.Engine]
-	listenPool  *Pool[listen.Engine]
+	cfg       Config
+	mux       *http.ServeMux
+	queue     chan struct{}
+	startedAt time.Time
+	dataDir   string
+	ortLib    string
+	authStore *KeyStore
+	ttsModel  *registry.Model
+	sttModel  *registry.Model
+	ttsPool   *Pool[tts.Engine]
+	sttPool   *Pool[stt.Engine]
 
 	charsMu   sync.Mutex
 	charsUsed int
@@ -110,7 +111,7 @@ func (r requestRef) String() string {
 	return strings.TrimSpace(r.Value)
 }
 
-type speakRequest struct {
+type ttsRequest struct {
 	Text   string     `json:"text"`
 	Voice  requestRef `json:"voice,omitempty"`
 	Model  requestRef `json:"model,omitempty"`
@@ -141,7 +142,7 @@ type voiceResponse struct {
 	ModelID     string `json:"model_id"`
 }
 
-type speakStatusResponse struct {
+type ttsStatusResponse struct {
 	Model        int    `json:"model"`
 	ModelID      string `json:"model_id"`
 	ModelName    string `json:"model_name"`
@@ -151,7 +152,7 @@ type speakStatusResponse struct {
 	CharsUsed    int    `json:"chars_used"`
 }
 
-type listenStatusResponse struct {
+type sttStatusResponse struct {
 	Model        int    `json:"model"`
 	ModelID      string `json:"model_id"`
 	ModelName    string `json:"model_name"`
@@ -160,13 +161,13 @@ type listenStatusResponse struct {
 }
 
 type statusResponse struct {
-	Status    string               `json:"status"`
-	Speak     speakStatusResponse  `json:"speak"`
-	Listen    listenStatusResponse `json:"listen"`
-	Queued    int64                `json:"queued"`
-	Processed int64                `json:"processed"`
-	Failed    int64                `json:"failed"`
-	Uptime    string               `json:"uptime"`
+	Status    string            `json:"status"`
+	TTS       ttsStatusResponse `json:"tts"`
+	STT       sttStatusResponse `json:"stt"`
+	Queued    int64             `json:"queued"`
+	Processed int64             `json:"processed"`
+	Failed    int64             `json:"failed"`
+	Uptime    string            `json:"uptime"`
 }
 
 type errorResponse struct {
@@ -184,11 +185,11 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Port == 0 {
 		cfg.Port = 7100
 	}
-	if cfg.SpeakWorkers == 0 {
-		cfg.SpeakWorkers = 1
+	if cfg.TTSWorkers == 0 {
+		cfg.TTSWorkers = 1
 	}
-	if cfg.ListenWorkers == 0 {
-		cfg.ListenWorkers = 1
+	if cfg.STTWorkers == 0 {
+		cfg.STTWorkers = 1
 	}
 	if cfg.QueueMax == 0 {
 		cfg.QueueMax = 5
@@ -199,19 +200,19 @@ func New(cfg Config) (*Server, error) {
 	if cfg.IdleTimeout == 0 && !cfg.KeepAlive {
 		cfg.IdleTimeout = 300 * time.Second
 	}
-	if cfg.SpeakModel == 0 {
+	if cfg.TTSModel == 0 {
 		model := registry.Default(registry.KindTTS)
 		if model == nil {
 			return nil, fmt.Errorf("no TTS models registered")
 		}
-		cfg.SpeakModel = model.Index
+		cfg.TTSModel = model.Index
 	}
-	if cfg.ListenModel == 0 {
+	if cfg.STTModel == 0 {
 		model := registry.Default(registry.KindSTT)
 		if model == nil {
 			return nil, fmt.Errorf("no STT models registered")
 		}
-		cfg.ListenModel = model.Index
+		cfg.STTModel = model.Index
 	}
 	resolvedChunkSize, err := resolveServerChunkSizeFromEnv(cfg.ChunkSize, os.Stderr)
 	if err != nil {
@@ -219,20 +220,20 @@ func New(cfg Config) (*Server, error) {
 	}
 	cfg.ChunkSize = resolvedChunkSize
 
-	speakModel := registry.GetByIndex(registry.KindTTS, cfg.SpeakModel)
-	if speakModel == nil {
-		return nil, fmt.Errorf("unknown TTS model %d", cfg.SpeakModel)
+	ttsModel := registry.GetByIndex(registry.KindTTS, cfg.TTSModel)
+	if ttsModel == nil {
+		return nil, fmt.Errorf("unknown TTS model %d", cfg.TTSModel)
 	}
-	if speakModel.Location != registry.Local {
-		return nil, fmt.Errorf("remote TTS model %q is not supported yet", speakModel.ID)
+	if ttsModel.Location != registry.Local {
+		return nil, fmt.Errorf("remote TTS model %q is not supported yet", ttsModel.ID)
 	}
 
-	listenModel := registry.GetByIndex(registry.KindSTT, cfg.ListenModel)
-	if listenModel == nil {
-		return nil, fmt.Errorf("unknown STT model %d", cfg.ListenModel)
+	sttModel := registry.GetByIndex(registry.KindSTT, cfg.STTModel)
+	if sttModel == nil {
+		return nil, fmt.Errorf("unknown STT model %d", cfg.STTModel)
 	}
-	if listenModel.Location != registry.Local {
-		return nil, fmt.Errorf("remote STT model %q is not supported yet", listenModel.ID)
+	if sttModel.Location != registry.Local {
+		return nil, fmt.Errorf("remote STT model %q is not supported yet", sttModel.ID)
 	}
 
 	if !phonemize.Available() {
@@ -254,69 +255,69 @@ func New(cfg Config) (*Server, error) {
 		}
 	}
 
-	speakResult, err := download.Ensure(dataDir, speakModel)
+	ttsResult, err := download.Ensure(dataDir, ttsModel)
 	if err != nil {
-		return nil, fmt.Errorf("download speak model: %w", err)
+		return nil, fmt.Errorf("download TTS model: %w", err)
 	}
-	modelFile := speakModel.PrimaryFile()
+	modelFile := ttsModel.PrimaryFile()
 	if modelFile == nil {
-		return nil, fmt.Errorf("model %q has no files", speakModel.ID)
+		return nil, fmt.Errorf("model %q has no files", ttsModel.ID)
 	}
-	speakModelPath := speakResult.Files[modelFile.Filename]
+	ttsModelPath := ttsResult.Files[modelFile.Filename]
 
-	listenResult, err := download.Ensure(dataDir, listenModel)
+	sttResult, err := download.Ensure(dataDir, sttModel)
 	if err != nil {
-		return nil, fmt.Errorf("download listen model: %w", err)
+		return nil, fmt.Errorf("download STT model: %w", err)
 	}
 
-	ortLib := strings.TrimSpace(speakResult.ORTLib)
+	ortLib := strings.TrimSpace(ttsResult.ORTLib)
 	if ortLib == "" {
-		ortLib = strings.TrimSpace(listenResult.ORTLib)
+		ortLib = strings.TrimSpace(sttResult.ORTLib)
 	}
 
 	s := &Server{
-		cfg:         cfg,
-		mux:         http.NewServeMux(),
-		startedAt:   time.Now(),
-		dataDir:     dataDir,
-		ortLib:      ortLib,
-		authStore:   authStore,
-		speakModel:  speakModel,
-		listenModel: listenModel,
+		cfg:       cfg,
+		mux:       http.NewServeMux(),
+		startedAt: time.Now(),
+		dataDir:   dataDir,
+		ortLib:    ortLib,
+		authStore: authStore,
+		ttsModel:  ttsModel,
+		sttModel:  sttModel,
 	}
 	if cfg.QueueMax > 0 {
 		s.queue = make(chan struct{}, cfg.QueueMax)
 	}
 
-	s.speakPool = NewPool(PoolConfig[speak.Engine]{
-		Name:        "speak",
-		Workers:     cfg.SpeakWorkers,
+	s.ttsPool = NewPool(PoolConfig[tts.Engine]{
+		Name:        "tts",
+		Workers:     cfg.TTSWorkers,
 		IdleTimeout: cfg.IdleTimeout,
 		KeepAlive:   cfg.KeepAlive,
-		Create: func() (speak.Engine, error) {
+		Create: func() (tts.Engine, error) {
 			if err := s.ensureORT(); err != nil {
 				return nil, err
 			}
-			return kokoro.New(speakModelPath, dataDir)
+			return kokoro.New(ttsModelPath, dataDir)
 		},
-		Close: func(eng speak.Engine) error {
+		Close: func(eng tts.Engine) error {
 			return eng.Close()
 		},
 		OnEmpty: s.onPoolsEmpty,
 	})
 
-	s.listenPool = NewPool(PoolConfig[listen.Engine]{
-		Name:        "listen",
-		Workers:     cfg.ListenWorkers,
+	s.sttPool = NewPool(PoolConfig[stt.Engine]{
+		Name:        "stt",
+		Workers:     cfg.STTWorkers,
 		IdleTimeout: cfg.IdleTimeout,
 		KeepAlive:   cfg.KeepAlive,
-		Create: func() (listen.Engine, error) {
+		Create: func() (stt.Engine, error) {
 			if err := s.ensureORT(); err != nil {
 				return nil, err
 			}
-			return newListenEngine(listenModel, dataDir)
+			return newSTTEngine(sttModel, dataDir)
 		},
-		Close: func(eng listen.Engine) error {
+		Close: func(eng stt.Engine) error {
 			return eng.Close()
 		},
 		OnEmpty: s.onPoolsEmpty,
@@ -326,13 +327,13 @@ func New(cfg Config) (*Server, error) {
 		if err := s.ensureORT(); err != nil {
 			return nil, fmt.Errorf("init ORT: %w", err)
 		}
-		if err := s.speakPool.Prewarm(); err != nil {
+		if err := s.ttsPool.Prewarm(); err != nil {
 			ort.Shutdown()
-			return nil, fmt.Errorf("pre-warm speak pool: %w", err)
+			return nil, fmt.Errorf("pre-warm TTS pool: %w", err)
 		}
-		if err := s.listenPool.Prewarm(); err != nil {
+		if err := s.sttPool.Prewarm(); err != nil {
 			s.Shutdown()
-			return nil, fmt.Errorf("pre-warm listen pool: %w", err)
+			return nil, fmt.Errorf("pre-warm STT pool: %w", err)
 		}
 	}
 
@@ -343,9 +344,10 @@ func New(cfg Config) (*Server, error) {
 		return AuthMiddleware(s.authStore)(handler)
 	}
 
-	s.mux.Handle("POST /v1/speak", protected(http.HandlerFunc(s.handleSpeak)))
-	s.mux.Handle("POST /v1/tts", protected(http.HandlerFunc(s.handleSpeak)))
-	s.mux.Handle("POST /v1/listen", protected(http.HandlerFunc(s.handleListen)))
+	s.mux.Handle("POST /v1/tts", protected(http.HandlerFunc(s.handleTTS)))
+	s.mux.Handle("POST /v1/speak", protected(http.HandlerFunc(s.handleTTS)))
+	s.mux.Handle("POST /v1/stt", protected(http.HandlerFunc(s.handleSTT)))
+	s.mux.Handle("POST /v1/listen", protected(http.HandlerFunc(s.handleSTT)))
 	s.mux.Handle("GET /v1/models", protected(http.HandlerFunc(s.handleModels)))
 	s.mux.Handle("GET /v1/voices", protected(http.HandlerFunc(s.handleVoices)))
 	s.mux.HandleFunc("GET /v1/status", s.handleStatus)
@@ -370,10 +372,10 @@ func (s *Server) ListenAndServe() error {
 		mode = "keep-alive"
 	}
 	log.Printf(
-		"cattery server listening on %s (speak %d, listen %d, max chars %d, queue %d, %s)",
+		"cattery server listening on %s (tts %d, stt %d, max chars %d, queue %d, %s)",
 		addr,
-		s.cfg.SpeakWorkers,
-		s.cfg.ListenWorkers,
+		s.cfg.TTSWorkers,
+		s.cfg.STTWorkers,
 		s.cfg.MaxChars,
 		s.cfg.QueueMax,
 		mode,
@@ -383,17 +385,17 @@ func (s *Server) ListenAndServe() error {
 
 // Shutdown releases pooled engine resources.
 func (s *Server) Shutdown() {
-	if s.speakPool != nil {
-		s.speakPool.Shutdown()
+	if s.ttsPool != nil {
+		s.ttsPool.Shutdown()
 	}
-	if s.listenPool != nil {
-		s.listenPool.Shutdown()
+	if s.sttPool != nil {
+		s.sttPool.Shutdown()
 	}
 	ort.Shutdown()
 }
 
-func (s *Server) handleSpeak(w http.ResponseWriter, r *http.Request) {
-	var req speakRequest
+func (s *Server) handleTTS(w http.ResponseWriter, r *http.Request) {
+	var req ttsRequest
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
@@ -417,13 +419,13 @@ func (s *Server) handleSpeak(w http.ResponseWriter, r *http.Request) {
 		req.Lang = "en-us"
 	}
 
-	model, err := s.resolveSpeakModel(req.Model.String())
+	model, err := s.resolveTTSModel(req.Model.String())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	voice, voiceIndex, err := resolveSpeakVoice(model, req.Voice.String(), req.Gender)
+	voice, voiceIndex, err := resolveTTSVoice(model, req.Voice.String(), req.Gender)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -462,7 +464,7 @@ func (s *Server) handleSpeak(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, err.Error())
 			return
 		}
-		log.Printf("speak error: %v", err)
+		log.Printf("tts error: %v", err)
 		writeError(w, http.StatusInternalServerError, "synthesis failed")
 		return
 	}
@@ -560,26 +562,26 @@ func (s *Server) handleVoices(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	charsUsed := s.currentChars()
-	speakStats := s.speakPool.Stats()
-	listenStats := s.listenPool.Stats()
+	ttsStats := s.ttsPool.Stats()
+	sttStats := s.sttPool.Stats()
 
 	writeJSON(w, http.StatusOK, statusResponse{
 		Status: "ok",
-		Speak: speakStatusResponse{
-			Model:        s.speakModel.Index,
-			ModelID:      s.speakModel.ID,
-			ModelName:    s.speakModel.Name,
-			Workers:      speakStats.Workers,
-			EnginesReady: speakStats.EnginesReady,
+		TTS: ttsStatusResponse{
+			Model:        s.ttsModel.Index,
+			ModelID:      s.ttsModel.ID,
+			ModelName:    s.ttsModel.Name,
+			Workers:      ttsStats.Workers,
+			EnginesReady: ttsStats.EnginesReady,
 			MaxChars:     s.cfg.MaxChars,
 			CharsUsed:    charsUsed,
 		},
-		Listen: listenStatusResponse{
-			Model:        s.listenModel.Index,
-			ModelID:      s.listenModel.ID,
-			ModelName:    s.listenModel.Name,
-			Workers:      listenStats.Workers,
-			EnginesReady: listenStats.EnginesReady,
+		STT: sttStatusResponse{
+			Model:        s.sttModel.Index,
+			ModelID:      s.sttModel.ID,
+			ModelName:    s.sttModel.Name,
+			Workers:      sttStats.Workers,
+			EnginesReady: sttStats.EnginesReady,
 		},
 		Queued:    s.queued.Load(),
 		Processed: s.processed.Load(),
@@ -588,8 +590,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) resolveSpeakModel(ref string) (*registry.Model, error) {
-	return resolveConfiguredModel(registry.KindTTS, ref, s.speakModel, "speak")
+func (s *Server) resolveTTSModel(ref string) (*registry.Model, error) {
+	return resolveConfiguredModel(registry.KindTTS, ref, s.ttsModel, "tts")
 }
 
 func resolveConfiguredModel(
@@ -620,28 +622,28 @@ func resolveConfiguredModel(
 	return model, nil
 }
 
-func resolveSpeakVoice(
+func resolveTTSVoice(
 	model *registry.Model,
 	voiceRef string,
 	gender string,
-) (speak.Voice, int, error) {
+) (tts.Voice, int, error) {
 	if model == nil {
-		return speak.Voice{}, 0, fmt.Errorf("missing TTS model")
+		return tts.Voice{}, 0, fmt.Errorf("missing TTS model")
 	}
 
 	switch model.ID {
 	case "kokoro-82m-v1.0":
 		voice, err := kokoro.ResolveVoice(model, voiceRef, gender)
 		if err != nil {
-			return speak.Voice{}, 0, err
+			return tts.Voice{}, 0, err
 		}
 		index := voiceIndex(model, voice.ID)
 		if index == 0 {
-			return speak.Voice{}, 0, fmt.Errorf("voice %q is not registered", voice.ID)
+			return tts.Voice{}, 0, fmt.Errorf("voice %q is not registered", voice.ID)
 		}
 		return voice, index, nil
 	default:
-		return speak.Voice{}, 0, fmt.Errorf("TTS model %q is not supported yet", model.ID)
+		return tts.Voice{}, 0, fmt.Errorf("TTS model %q is not supported yet", model.ID)
 	}
 }
 
@@ -659,20 +661,20 @@ func voiceIndex(model *registry.Model, voiceID string) int {
 
 func (s *Server) synthesize(
 	ctx context.Context,
-	req speakRequest,
+	req ttsRequest,
 	model *registry.Model,
-	voice speak.Voice,
+	voice tts.Voice,
 ) (*bytes.Buffer, *synthMeta, error) {
-	eng, err := s.speakPool.Borrow(ctx, s.queue, &s.queued)
+	eng, err := s.ttsPool.Borrow(ctx, s.queue, &s.queued)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer s.speakPool.Return(eng)
+	defer s.ttsPool.Return(eng)
 
 	t0 := time.Now()
 	var buf bytes.Buffer
 	err = preflight.GuardMemoryError("speech synthesis", func() error {
-		return eng.Speak(&buf, req.Text, speak.Options{
+		return eng.Speak(&buf, req.Text, tts.Options{
 			Voice:     voice.ID,
 			Gender:    req.Gender,
 			Speed:     req.Speed,
@@ -712,10 +714,10 @@ func (s *Server) onPoolsEmpty() {
 	if s.cfg.KeepAlive {
 		return
 	}
-	if s.speakPool != nil && !s.speakPool.Empty() {
+	if s.ttsPool != nil && !s.ttsPool.Empty() {
 		return
 	}
-	if s.listenPool != nil && !s.listenPool.Empty() {
+	if s.sttPool != nil && !s.sttPool.Empty() {
 		return
 	}
 	ort.Shutdown()

@@ -8,14 +8,14 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/jikkuatwork/cattery/listen"
-	"github.com/jikkuatwork/cattery/listen/moonshine"
 	"github.com/jikkuatwork/cattery/paths"
 	"github.com/jikkuatwork/cattery/preflight"
 	"github.com/jikkuatwork/cattery/registry"
+	"github.com/jikkuatwork/cattery/stt"
+	"github.com/jikkuatwork/cattery/stt/moonshine"
 )
 
-type listenResponse struct {
+type sttResponse struct {
 	Text           string  `json:"text"`
 	Duration       float64 `json:"duration"`
 	ProcessingTime float64 `json:"processing_time"`
@@ -25,20 +25,20 @@ type listenResponse struct {
 	ModelName      string  `json:"model_name"`
 }
 
-func (s *Server) handleListen(w http.ResponseWriter, r *http.Request) {
-	model, err := s.resolveListenModel(r.URL.Query().Get("model"))
+func (s *Server) handleSTT(w http.ResponseWriter, r *http.Request) {
+	model, err := s.resolveSTTModel(r.URL.Query().Get("model"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
-	if err := validateListenContentType(contentType); err != nil {
+	if err := validateSTTContentType(contentType); err != nil {
 		writeError(w, http.StatusUnsupportedMediaType, err.Error())
 		return
 	}
 
-	eng, err := s.listenPool.Borrow(r.Context(), s.queue, &s.queued)
+	eng, err := s.sttPool.Borrow(r.Context(), s.queue, &s.queued)
 	if err != nil {
 		if errors.Is(err, ErrQueueFull) {
 			w.Header().Set("Retry-After", "2")
@@ -53,12 +53,12 @@ func (s *Server) handleListen(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "transcription failed")
 		return
 	}
-	defer s.listenPool.Return(eng)
+	defer s.sttPool.Return(eng)
 
-	var result *listen.Result
+	var result *stt.Result
 	err = preflight.GuardMemoryError("transcription", func() error {
 		var innerErr error
-		result, innerErr = eng.Transcribe(r.Body, listen.Options{
+		result, innerErr = eng.Transcribe(r.Body, stt.Options{
 			Lang:      strings.TrimSpace(r.URL.Query().Get("lang")),
 			ChunkSize: s.cfg.ChunkSize,
 		})
@@ -76,7 +76,7 @@ func (s *Server) handleListen(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.processed.Add(1)
-	writeJSON(w, http.StatusOK, listenResponse{
+	writeJSON(w, http.StatusOK, sttResponse{
 		Text:           result.Text,
 		Duration:       result.Duration,
 		ProcessingTime: result.Elapsed,
@@ -87,11 +87,11 @@ func (s *Server) handleListen(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) resolveListenModel(ref string) (*registry.Model, error) {
-	return resolveConfiguredModel(registry.KindSTT, ref, s.listenModel, "listen")
+func (s *Server) resolveSTTModel(ref string) (*registry.Model, error) {
+	return resolveConfiguredModel(registry.KindSTT, ref, s.sttModel, "stt")
 }
 
-func newListenEngine(model *registry.Model, dataDir string) (listen.Engine, error) {
+func newSTTEngine(model *registry.Model, dataDir string) (stt.Engine, error) {
 	if model == nil {
 		return nil, fmt.Errorf("missing STT model")
 	}
@@ -104,7 +104,7 @@ func newListenEngine(model *registry.Model, dataDir string) (listen.Engine, erro
 	}
 }
 
-func validateListenContentType(contentType string) error {
+func validateSTTContentType(contentType string) error {
 	if contentType == "" {
 		return nil
 	}

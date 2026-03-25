@@ -123,7 +123,7 @@ func TestRateLimiter(t *testing.T) {
 	}))
 
 	request := func() *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/v1/speak", nil)
+		req := httptest.NewRequest(http.MethodPost, "/v1/tts", nil)
 		req.Header.Set("Authorization", "Bearer "+key)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)

@@ -1,4 +1,4 @@
-package listen
+package stt
 
 import (
 	"io"

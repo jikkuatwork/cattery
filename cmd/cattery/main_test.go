@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/jikkuatwork/cattery/registry"
@@ -27,6 +28,12 @@ func TestResolveModelRejectsAmbiguousIndex(t *testing.T) {
 }
 
 func TestLooksLikeCommandIncludesNewVerbs(t *testing.T) {
+	if !looksLikeCommand("tts") {
+		t.Fatal("expected tts to look like a command")
+	}
+	if !looksLikeCommand("stt") {
+		t.Fatal("expected stt to look like a command")
+	}
 	if !looksLikeCommand("speak") {
 		t.Fatal("expected speak to look like a command")
 	}
@@ -35,5 +42,24 @@ func TestLooksLikeCommandIncludesNewVerbs(t *testing.T) {
 	}
 	if !looksLikeCommand("keys") {
 		t.Fatal("expected keys to look like a command")
+	}
+}
+
+func TestDisplayCommandNamesHideAdvancedAndAliases(t *testing.T) {
+	got := strings.Join(displayCommandNames(), ",")
+	if strings.Contains(got, "speak") || strings.Contains(got, "listen") {
+		t.Fatalf("display commands leaked hidden aliases: %q", got)
+	}
+	if strings.Contains(got, "keys") || strings.Contains(got, "list") {
+		t.Fatalf("display commands leaked advanced commands: %q", got)
+	}
+}
+
+func TestWantsAdvancedHelpSupportsShortFlag(t *testing.T) {
+	if !wantsAdvancedHelp([]string{"-a"}) {
+		t.Fatal("expected -a to enable advanced help")
+	}
+	if !wantsAdvancedHelp([]string{"--advanced"}) {
+		t.Fatal("expected --advanced to enable advanced help")
 	}
 }

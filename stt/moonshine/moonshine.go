@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/jikkuatwork/cattery/audio"
-	"github.com/jikkuatwork/cattery/listen"
+	"github.com/jikkuatwork/cattery/stt"
 	ortgo "github.com/yalue/onnxruntime_go"
 )
 
@@ -25,7 +25,7 @@ const (
 	defaultEOSToken      = 2
 )
 
-var _ listen.Engine = (*Engine)(nil)
+var _ stt.Engine = (*Engine)(nil)
 
 // Engine runs Moonshine STT with separate encoder and decoder sessions.
 type Engine struct {
@@ -100,7 +100,7 @@ func New(modelDir string, meta map[string]string) (*Engine, error) {
 }
 
 // Transcribe reads audio, resamples to the model rate, and returns text.
-func (e *Engine) Transcribe(r io.Reader, opts listen.Options) (*listen.Result, error) {
+func (e *Engine) Transcribe(r io.Reader, opts stt.Options) (*stt.Result, error) {
 	if e == nil || e.encoder == nil || e.decoder == nil {
 		return nil, fmt.Errorf("engine is closed")
 	}
@@ -213,7 +213,7 @@ func transcribeStream(
 	r io.Reader,
 	sampleRate int,
 	transcribe func([]float32) (string, error),
-) (*listen.Result, error) {
+) (*stt.Result, error) {
 	return transcribeStreamWithChunkSize(r, sampleRate, 0, transcribe)
 }
 
@@ -222,7 +222,7 @@ func transcribeStreamWithChunkSize(
 	sampleRate int,
 	chunkSize time.Duration,
 	transcribe func([]float32) (string, error),
-) (*listen.Result, error) {
+) (*stt.Result, error) {
 	if transcribe == nil {
 		return nil, fmt.Errorf("missing chunk transcriber")
 	}
@@ -312,7 +312,7 @@ func transcribeStreamWithChunkSize(
 
 	duration := float64(totalSourceSamples) / float64(sourceRate)
 	elapsed := time.Since(start).Seconds()
-	result := &listen.Result{
+	result := &stt.Result{
 		Text:     stitchChunkTexts(texts),
 		Duration: duration,
 		Elapsed:  elapsed,

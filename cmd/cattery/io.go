@@ -60,7 +60,7 @@ func stdoutIsTerminal() bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
-func resolveSpeakText(parts []string) (string, error) {
+func resolveTTSText(parts []string) (string, error) {
 	if len(parts) == 1 && parts[0] == "-" {
 		return readStdinText()
 	}
@@ -72,7 +72,7 @@ func resolveSpeakText(parts []string) (string, error) {
 	if stdinHasData() {
 		return readStdinText()
 	}
-	return "", fmt.Errorf("no text provided\nUsage: cattery speak \"Hello, world.\"")
+	return "", fmt.Errorf("no text provided\nUsage: cattery tts \"Hello, world.\"")
 }
 
 func readStdinText() (string, error) {
@@ -90,7 +90,7 @@ func readStdinText() (string, error) {
 	return text, nil
 }
 
-func openSpeakOutput(path string) (*outputTarget, error) {
+func openTTSOutput(path string) (*outputTarget, error) {
 	path = strings.TrimSpace(path)
 	if path == "-" || (path == "" && !stdoutIsTerminal()) {
 		return &outputTarget{

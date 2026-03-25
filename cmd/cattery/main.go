@@ -3,8 +3,8 @@
 // Usage:
 //
 //	cattery "Hello, world."
-//	cattery speak --voice 4 "Hello!"
-//	cattery listen audio.wav
+//	cattery tts --voice 4 "Hello!"
+//	cattery stt audio.wav
 //	cattery status
 //	cattery download
 package main
@@ -24,8 +24,8 @@ import (
 	"github.com/jikkuatwork/cattery/preflight"
 	"github.com/jikkuatwork/cattery/registry"
 	"github.com/jikkuatwork/cattery/server"
-	"github.com/jikkuatwork/cattery/speak"
-	"github.com/jikkuatwork/cattery/speak/kokoro"
+	"github.com/jikkuatwork/cattery/tts"
+	"github.com/jikkuatwork/cattery/tts/kokoro"
 )
 
 func main() {
@@ -39,16 +39,16 @@ func run() error {
 	args := os.Args[1:]
 
 	if len(args) == 0 {
-		printUsage()
+		printDefaultUsage()
 		return nil
 	}
 
 	// Subcommands (info/management only)
 	switch args[0] {
-	case "speak":
-		return cmdSpeak(args[1:])
-	case "listen":
-		return cmdListen(args[1:])
+	case "tts", "speak":
+		return cmdTTS(args[1:])
+	case "stt", "listen":
+		return cmdSTT(args[1:])
 	case "keys":
 		return cmdKeys(args[1:])
 	case "serve":
@@ -60,7 +60,11 @@ func run() error {
 	case "download":
 		return cmdDownload(args[1:])
 	case "help", "--help", "-h":
-		printUsage()
+		if wantsAdvancedHelp(args[1:]) {
+			printAdvancedUsage()
+			return nil
+		}
+		printDefaultUsage()
 		return nil
 	case "version", "--version":
 		fmt.Println("cattery 0.1.0")
@@ -72,21 +76,21 @@ func run() error {
 		return fmt.Errorf(
 			"unknown command %q\nDid you mean one of: %s?",
 			args[0],
-			strings.Join(commandNames(), ", "),
+			strings.Join(displayCommandNames(), ", "),
 		)
 	}
 
-	// Primary action: bare text is a shortcut for speak.
-	return cmdSpeak(args)
+	// Primary action: bare text is a shortcut for TTS.
+	return cmdTTS(args)
 }
 
 // --- serve ---
 
 func cmdServe(args []string) error {
 	cfg := server.Config{
-		Port:          7100,
-		SpeakWorkers:  1,
-		ListenWorkers: 1,
+		Port:       7100,
+		TTSWorkers: 1,
+		STTWorkers: 1,
 	}
 	var idleSec int
 	var chunkSizeFlag string
@@ -98,15 +102,15 @@ func cmdServe(args []string) error {
 			if i < len(args) {
 				fmt.Sscanf(args[i], "%d", &cfg.Port)
 			}
-		case "--workers", "--speak-workers", "-w":
+		case "--workers", "--speak-workers", "--tts-workers", "-w":
 			i++
 			if i < len(args) {
-				fmt.Sscanf(args[i], "%d", &cfg.SpeakWorkers)
+				fmt.Sscanf(args[i], "%d", &cfg.TTSWorkers)
 			}
-		case "--listen-workers":
+		case "--listen-workers", "--stt-workers":
 			i++
 			if i < len(args) {
-				fmt.Sscanf(args[i], "%d", &cfg.ListenWorkers)
+				fmt.Sscanf(args[i], "%d", &cfg.STTWorkers)
 			}
 		case "--max-chars":
 			i++
@@ -134,27 +138,27 @@ func cmdServe(args []string) error {
 				return fmt.Errorf("missing value for --chunk-size")
 			}
 			chunkSizeFlag = args[i]
-		case "--model", "--speak-model":
+		case "--model", "--speak-model", "--tts-model":
 			i++
 			if i < len(args) {
 				index, err := resolveServeModelIndex(registry.KindTTS, args[i])
 				if err != nil {
 					return err
 				}
-				cfg.SpeakModel = index
+				cfg.TTSModel = index
 			}
-		case "--listen-model":
+		case "--listen-model", "--stt-model":
 			i++
 			if i < len(args) {
 				index, err := resolveServeModelIndex(registry.KindSTT, args[i])
 				if err != nil {
 					return err
 				}
-				cfg.ListenModel = index
+				cfg.STTModel = index
 			}
 		default:
 			return fmt.Errorf(
-				"unknown flag %q for serve\nUsage: cattery serve [--port 7100] [--speak-workers 1] [--listen-workers 1] [--chunk-size 30s] [--auth]",
+				"unknown flag %q for serve\nUsage: cattery serve [--port 7100] [--tts-workers 1] [--stt-workers 1] [--chunk-size 30s] [--auth]",
 				args[i],
 			)
 		}
@@ -175,9 +179,9 @@ func cmdServe(args []string) error {
 	return srv.ListenAndServe()
 }
 
-// --- speak (primary action) ---
+// --- tts (primary action) ---
 
-func cmdSpeak(args []string) error {
+func cmdTTS(args []string) error {
 	var voiceFlag string
 	var genderFilter string
 	speed := 1.0
@@ -232,14 +236,14 @@ func cmdSpeak(args []string) error {
 		}
 	}
 
-	text, err := resolveSpeakText(textParts)
+	text, err := resolveTTSText(textParts)
 	if err != nil {
 		return err
 	}
 
 	model := resolveTTSModel(modelRef)
 	if model == nil {
-		return fmt.Errorf("unknown TTS model %q\nRun 'cattery list speak' to see available models", modelRef)
+		return fmt.Errorf("unknown TTS model %q\nRun 'cattery list tts' to see available models", modelRef)
 	}
 	if model.Location != registry.Local {
 		return fmt.Errorf("remote TTS model %q is not supported yet", model.ID)
@@ -248,7 +252,7 @@ func cmdSpeak(args []string) error {
 	voiceInfo, err := kokoro.ResolveVoice(model, voiceFlag, genderFilter)
 	if err != nil {
 		if voiceFlag != "" {
-			return fmt.Errorf("%w\nRun 'cattery list speak' to see available voices", err)
+			return fmt.Errorf("%w\nRun 'cattery list tts' to see available voices", err)
 		}
 		return err
 	}
@@ -284,7 +288,7 @@ func cmdSpeak(args []string) error {
 	}
 	defer eng.Close()
 
-	output, err := openSpeakOutput(outputPath)
+	output, err := openTTSOutput(outputPath)
 	if err != nil {
 		return err
 	}
@@ -294,7 +298,7 @@ func cmdSpeak(args []string) error {
 
 	t0 := time.Now()
 	if err := preflight.GuardMemoryError("speech synthesis", func() error {
-		return eng.Speak(counted, text, speak.Options{
+		return eng.Speak(counted, text, tts.Options{
 			Voice:     voiceInfo.ID,
 			Lang:      lang,
 			Speed:     speed,
@@ -310,8 +314,8 @@ func cmdSpeak(args []string) error {
 	if duration > 0 {
 		rtf = elapsed.Seconds() / duration
 	}
-	fmt.Fprintf(os.Stderr, "%s | Used %s in %s, took %.1fs (RTF: %.2f)\n",
-		output.name, voiceInfo.Name, model.Name, duration, rtf)
+	fmt.Fprintf(os.Stderr, "%s | %s, %.1fs (RTF: %.2f)\n",
+		output.name, voiceInfo.Name, duration, rtf)
 
 	return nil
 }
@@ -526,27 +530,68 @@ func cmdDownload(args []string) error {
 
 // --- help ---
 
-func printUsage() {
+func printDefaultUsage() {
 	fmt.Fprintf(os.Stderr, `cattery - speech tools from the command line
 
 Usage:
-  cattery "Hello, world."                Shortcut for cattery speak
-  cattery speak --voice 4 "Hi there"     Speak with voice index
-  cattery speak --model 1 "Hi there"     Speak with model index
-  cattery listen call.wav                Transcribe audio to stdout
-  cattery listen -                       Read audio from stdin
+  cattery "Hello, world."          Shortcut for cattery tts
+  cattery tts "Hello, world."      Text to speech
+  cattery stt audio.wav            Speech to text
+  cattery serve                    Start REST API server
+  cattery status                   Show model/runtime status
+  cattery download                 Pre-download local assets
+  cattery help --advanced          Show advanced commands and flags
 
 Commands:
-  speak        Text to speech
-  listen       Speech to text
-  serve        Start REST API server
-  keys         Manage API keys for --auth server mode
-  list         List speak/listen models and voices
-  status       Show system status and downloaded artefacts
-  download     Pre-download local models and runtime
-  help         Show this help
+  tts         Text to speech
+  stt         Speech to text
+  serve       Start REST API server
+  status      Show system status and downloaded artefacts
+  download    Pre-download local models and runtime
+  help        Show this help
 
-Speak flags:
+TTS:
+  --voice REF      Voice number, name, or ID
+  --female         Pick a random female voice
+  --male           Pick a random male voice
+  --speed FLOAT    Speech speed, 0.5-2.0 (default: 1.0)
+  --output, -o     Output WAV file (default: output.wav or stdout if piped)
+
+STT:
+  --output, -o     Output text file (default: stdout)
+
+Server:
+  cattery serve --port 8080
+  cattery serve --auth
+
+On first run, cattery downloads the model (~92MB) and runtime (~18MB).
+No accounts or API keys required.
+
+Run 'cattery help --advanced' for more.
+`)
+}
+
+func printAdvancedUsage() {
+	fmt.Fprintf(os.Stderr, `cattery - speech tools from the command line
+
+Usage:
+  cattery "Hello, world."          Shortcut for cattery tts
+  cattery tts --voice 4 "Hi there"
+  cattery tts --model 1 "Hi there"
+  cattery stt call.wav
+  cattery stt -
+
+Commands:
+  tts         Text to speech
+  stt         Speech to text
+  serve       Start REST API server
+  status      Show system status and downloaded artefacts
+  download    Pre-download local models and runtime
+  list        List TTS/STT models and voices
+  keys        Manage API keys for --auth server mode
+  help        Show this help
+
+TTS flags:
   --voice REF      Voice number, name, or ID
   --female         Pick a random female voice
   --male           Pick a random male voice
@@ -556,43 +601,51 @@ Speak flags:
   --lang LANG      Phonemizer language (default: en-us)
   --model REF      TTS model index or ID (default: 1)
 
-Listen flags:
-  --lang LANG      Language hint
+STT flags:
   --chunk-size DUR Chunk size override, 10s-60s (bare ints = seconds)
   --output, -o     Output text file (default: stdout)
+  --lang LANG      Language hint
   --model REF      STT model index or ID (default: 1)
 
 Manage:
   cattery list
-  cattery list speak
-  cattery download listen
-  cattery status speak --model 1
+  cattery list tts
+  cattery download stt
+  cattery status tts --model 1
 
 Pipes:
-  cattery listen call.wav | cattery speak
-  echo "Hello" | cattery speak | cattery listen
+  cattery stt call.wav | cattery tts
+  echo "Hello" | cattery tts | cattery stt
 
 Server:
-  cattery serve                        Start on :7100 (lazy-loaded pools)
-  cattery serve --port 8080 -w 2       Custom speak workers
-  cattery serve --listen-workers 2     Custom listen workers
-  cattery serve --chunk-size 20s       Shared chunk size override
-  cattery serve --speak-model 1        Default TTS model
-  cattery serve --listen-model 1       Default STT model
-  cattery serve --max-chars 300        Shared char budget (bounds RAM)
-  cattery serve --idle-timeout 600     Evict engines after N seconds idle
-  cattery serve --keep-alive           Pre-warm engines, never evict
-  cattery serve --auth                 Require Bearer API keys except /v1/status
+  cattery serve --port 8080
+  cattery serve --tts-workers 2
+  cattery serve --stt-workers 2
+  cattery serve --chunk-size 20s
+  cattery serve --tts-model 1
+  cattery serve --stt-model 1
+  cattery serve --max-chars 300
+  cattery serve --queue-max 10
+  cattery serve --idle-timeout 600
+  cattery serve --keep-alive
+  cattery serve --auth
 
 Keys:
   cattery keys create --name my-app
-  cattery keys create --name bot --rate 120
   cattery keys list
   cattery keys revoke cat_a1b2c3d4
   cattery keys delete cat_a1b2c3d4
 
+Compatibility aliases:
+  cattery speak ...               Alias for cattery tts
+  cattery listen ...              Alias for cattery stt
+  --speak-workers, -w, --workers  Alias for --tts-workers
+  --listen-workers                Alias for --stt-workers
+  --speak-model                   Alias for --tts-model
+  --listen-model                  Alias for --stt-model
+
 Chunk size:
-  CATTERY_CHUNK_SIZE   Shared override for speak, listen, and serve
+  CATTERY_CHUNK_SIZE   Shared override for tts, stt, and serve
   Auto default         10s <=512MB, 15s <=1GB, 20s <=2GB, 30s <=4GB,
                        45s <=8GB, 60s >8GB, 30s if RAM is unknown
 
@@ -602,14 +655,14 @@ No accounts or API keys required.
 }
 
 // looksLikeCommand returns true if a single-word argument looks like
-// it was meant to be a subcommand rather than text to speak.
+// it was meant to be a subcommand rather than text to synthesize.
 // A single lowercase word with no spaces is suspicious.
 func looksLikeCommand(s string) bool {
 	if strings.Contains(s, " ") {
 		return false
 	}
 	// Known commands for fuzzy matching
-	commands := commandNames()
+	commands := knownCommandNames()
 	lower := strings.ToLower(s)
 	for _, cmd := range commands {
 		if lower == cmd {
@@ -626,6 +679,16 @@ func looksLikeCommand(s string) bool {
 			if float64(matches)/float64(len(cmd)) > 0.5 {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func wantsAdvancedHelp(args []string) bool {
+	for _, arg := range args {
+		switch arg {
+		case "--advanced", "-a":
+			return true
 		}
 	}
 	return false
@@ -711,7 +774,7 @@ func parseKind(ref string) (registry.Kind, error) {
 	if kind, ok := parseKindAlias(ref); ok {
 		return kind, nil
 	}
-	return "", fmt.Errorf("unknown kind %q (want: speak, listen, runtime)", ref)
+	return "", fmt.Errorf("unknown kind %q (want: tts, stt, runtime)", ref)
 }
 
 func parseKindAlias(ref string) (registry.Kind, bool) {
@@ -791,7 +854,7 @@ func resolveModel(kind registry.Kind, ref string, localOnly bool) (*registry.Mod
 		}
 		if len(matches) > 1 {
 			return nil, fmt.Errorf(
-				"model index %d is ambiguous; use speak/listen or --kind",
+				"model index %d is ambiguous; use tts/stt or --kind",
 				modelIndex,
 			)
 		}
@@ -910,8 +973,12 @@ func kindTitle(kind registry.Kind) string {
 	}
 }
 
-func commandNames() []string {
-	return []string{"speak", "listen", "serve", "keys", "list", "status", "download", "help", "version"}
+func displayCommandNames() []string {
+	return []string{"tts", "stt", "serve", "status", "download", "help"}
+}
+
+func knownCommandNames() []string {
+	return []string{"tts", "stt", "speak", "listen", "serve", "keys", "list", "status", "download", "help", "version"}
 }
 
 func resolveServeModelIndex(kind registry.Kind, ref string) (int, error) {

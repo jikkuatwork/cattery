@@ -21,8 +21,8 @@ import (
 	"github.com/jikkuatwork/cattery/ort"
 	"github.com/jikkuatwork/cattery/paths"
 	"github.com/jikkuatwork/cattery/registry"
-	"github.com/jikkuatwork/cattery/speak"
-	"github.com/jikkuatwork/cattery/speak/kokoro"
+	"github.com/jikkuatwork/cattery/tts"
+	"github.com/jikkuatwork/cattery/tts/kokoro"
 	ortgo "github.com/yalue/onnxruntime_go"
 )
 
@@ -389,7 +389,7 @@ func generateTestAudio(res *download.Result, model *registry.Model, dataDir, tex
 	defer eng.Close()
 
 	var buf bytes.Buffer
-	err = eng.Speak(&buf, text, speak.Options{
+	err = eng.Speak(&buf, text, tts.Options{
 		Voice: "af_heart",
 		Lang:  "en-us",
 	})

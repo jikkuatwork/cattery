@@ -16,7 +16,7 @@ import (
 	"github.com/jikkuatwork/cattery/paths"
 	"github.com/jikkuatwork/cattery/phonemize"
 	"github.com/jikkuatwork/cattery/registry"
-	"github.com/jikkuatwork/cattery/speak"
+	"github.com/jikkuatwork/cattery/tts"
 	ort "github.com/yalue/onnxruntime_go"
 )
 
@@ -49,7 +49,7 @@ var vocab = map[rune]int64{
 	'↓': 169, '→': 171, '↗': 172, '↘': 173, 'ᵻ': 177,
 }
 
-var _ speak.Engine = (*Engine)(nil)
+var _ tts.Engine = (*Engine)(nil)
 
 // Engine wraps a Kokoro ONNX Runtime session.
 type Engine struct {
@@ -83,31 +83,31 @@ func New(modelPath string, dataDir string) (*Engine, error) {
 }
 
 // Voices returns the Kokoro voice catalog for a model.
-func Voices(model *registry.Model) []speak.Voice {
+func Voices(model *registry.Model) []tts.Voice {
 	if model == nil {
 		return nil
 	}
 
-	voices := make([]speak.Voice, len(model.Voices))
+	voices := make([]tts.Voice, len(model.Voices))
 	for i := range model.Voices {
-		voices[i] = speakVoice(&model.Voices[i])
+		voices[i] = ttsVoice(&model.Voices[i])
 	}
 	return voices
 }
 
 // ResolveVoice resolves a user voice selection to a concrete Kokoro voice.
-func ResolveVoice(model *registry.Model, voiceFlag, genderFilter string) (speak.Voice, error) {
+func ResolveVoice(model *registry.Model, voiceFlag, genderFilter string) (tts.Voice, error) {
 	voice, _, err := resolveVoice(model, voiceFlag, genderFilter)
 	return voice, err
 }
 
 // Voices returns the available Kokoro voices.
-func (e *Engine) Voices() []speak.Voice {
+func (e *Engine) Voices() []tts.Voice {
 	return Voices(e.model)
 }
 
 // Speak phonemizes the text, resolves a voice, runs Kokoro, and writes WAV.
-func (e *Engine) Speak(w io.Writer, text string, opts speak.Options) (err error) {
+func (e *Engine) Speak(w io.Writer, text string, opts tts.Options) (err error) {
 	if e == nil || e.session == nil {
 		return fmt.Errorf("engine is closed")
 	}
@@ -336,17 +336,17 @@ func loadVoice(path string, numTokens, styleDim int) ([]float32, error) {
 	return style, nil
 }
 
-func resolveVoice(model *registry.Model, voiceFlag, genderFilter string) (speak.Voice, *registry.Voice, error) {
+func resolveVoice(model *registry.Model, voiceFlag, genderFilter string) (tts.Voice, *registry.Voice, error) {
 	if model == nil {
-		return speak.Voice{}, nil, fmt.Errorf("missing model metadata")
+		return tts.Voice{}, nil, fmt.Errorf("missing model metadata")
 	}
 
 	if voiceFlag != "" {
 		asset := model.GetVoice(voiceFlag)
 		if asset == nil {
-			return speak.Voice{}, nil, fmt.Errorf("unknown voice %q", voiceFlag)
+			return tts.Voice{}, nil, fmt.Errorf("unknown voice %q", voiceFlag)
 		}
-		return speakVoice(asset), asset, nil
+		return ttsVoice(asset), asset, nil
 	}
 
 	candidates := make([]int, 0, len(model.Voices))
@@ -357,18 +357,18 @@ func resolveVoice(model *registry.Model, voiceFlag, genderFilter string) (speak.
 	}
 
 	if genderFilter != "" && genderFilter != "male" && genderFilter != "female" {
-		return speak.Voice{}, nil, fmt.Errorf("gender must be \"male\" or \"female\"")
+		return tts.Voice{}, nil, fmt.Errorf("gender must be \"male\" or \"female\"")
 	}
 	if len(candidates) == 0 {
-		return speak.Voice{}, nil, fmt.Errorf("no %s voices available", genderFilter)
+		return tts.Voice{}, nil, fmt.Errorf("no %s voices available", genderFilter)
 	}
 
 	asset := &model.Voices[candidates[rand.Intn(len(candidates))]]
-	return speakVoice(asset), asset, nil
+	return ttsVoice(asset), asset, nil
 }
 
-func speakVoice(v *registry.Voice) speak.Voice {
-	return speak.Voice{
+func ttsVoice(v *registry.Voice) tts.Voice {
+	return tts.Voice{
 		ID:          v.ID,
 		Name:        v.Name,
 		Gender:      v.Gender,

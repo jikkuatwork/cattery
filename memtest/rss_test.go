@@ -36,13 +36,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jikkuatwork/cattery/listen"
-	"github.com/jikkuatwork/cattery/listen/moonshine"
 	"github.com/jikkuatwork/cattery/ort"
 	"github.com/jikkuatwork/cattery/paths"
 	"github.com/jikkuatwork/cattery/registry"
-	"github.com/jikkuatwork/cattery/speak"
-	"github.com/jikkuatwork/cattery/speak/kokoro"
+	"github.com/jikkuatwork/cattery/stt"
+	"github.com/jikkuatwork/cattery/stt/moonshine"
+	"github.com/jikkuatwork/cattery/tts"
+	"github.com/jikkuatwork/cattery/tts/kokoro"
 )
 
 const (
@@ -193,7 +193,7 @@ func runTTS(t *testing.T, text string) int64 {
 	}
 	defer wavOut.Close()
 
-	if err := eng.Speak(wavOut, text, speak.Options{
+	if err := eng.Speak(wavOut, text, tts.Options{
 		Voice: voiceID,
 		Speed: 1.0,
 	}); err != nil {
@@ -228,7 +228,7 @@ func runSTT(t *testing.T, durationSec int) int64 {
 	stop, peakMB := startRSSPoller()
 	t.Cleanup(stop)
 
-	if _, err := eng.Transcribe(audio, listen.Options{}); err != nil {
+	if _, err := eng.Transcribe(audio, stt.Options{}); err != nil {
 		t.Fatalf("Transcribe: %v", err)
 	}
 
@@ -250,7 +250,7 @@ func drainMemory(t *testing.T) {
 }
 
 // firstAvailableVoice returns the ID of the first voice whose .bin file exists.
-func firstAvailableVoice(t *testing.T, voices []speak.Voice, dataDir, modelID string) string {
+func firstAvailableVoice(t *testing.T, voices []tts.Voice, dataDir, modelID string) string {
 	t.Helper()
 	for _, v := range voices {
 		vf := paths.VoiceFile(dataDir, modelID, v.ID)
