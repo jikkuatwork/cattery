@@ -115,7 +115,10 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 
 ## What's Next
 
-### Also open
+**Memory validation pipeline complete** (plans 31–33). #27, #28, #29 closed.
+Remaining cgroup validation (4G/1G/512M) is manual — see `scripts/memtest-constrained.sh`.
+
+### Open
 
 - **#22 Bundle espeak-ng** — eliminate the only system dependency
 - **#23 OpenAI remote engines** — `OPENAI_API_KEY` unlocks remote TTS/STT
