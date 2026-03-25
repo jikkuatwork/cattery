@@ -46,6 +46,7 @@ type Config struct {
 	MaxChars      int
 	IdleTimeout   time.Duration
 	KeepAlive     bool
+	Auth          bool
 	SpeakModel    int
 	ListenModel   int
 	ChunkSize     time.Duration
@@ -59,6 +60,7 @@ type Server struct {
 	startedAt   time.Time
 	dataDir     string
 	ortLib      string
+	authStore   *KeyStore
 	speakModel  *registry.Model
 	listenModel *registry.Model
 	speakPool   *Pool[speak.Engine]
@@ -238,6 +240,19 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	dataDir := paths.DataDir()
+	var authStore *KeyStore
+	if cfg.Auth {
+		authStore = DefaultKeyStore()
+		if err := authStore.Load(); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("no API keys found; run 'cattery keys create' first")
+			}
+			return nil, fmt.Errorf("load API keys: %w", err)
+		}
+		if len(authStore.Entries()) == 0 {
+			return nil, fmt.Errorf("no API keys found; run 'cattery keys create' first")
+		}
+	}
 
 	speakResult, err := download.Ensure(dataDir, speakModel)
 	if err != nil {
@@ -265,6 +280,7 @@ func New(cfg Config) (*Server, error) {
 		startedAt:   time.Now(),
 		dataDir:     dataDir,
 		ortLib:      ortLib,
+		authStore:   authStore,
 		speakModel:  speakModel,
 		listenModel: listenModel,
 	}
@@ -320,21 +336,28 @@ func New(cfg Config) (*Server, error) {
 		}
 	}
 
-	s.mux.HandleFunc("POST /v1/speak", s.handleSpeak)
-	s.mux.HandleFunc("POST /v1/tts", s.handleSpeak)
-	s.mux.HandleFunc("POST /v1/listen", s.handleListen)
-	s.mux.HandleFunc("GET /v1/models", s.handleModels)
-	s.mux.HandleFunc("GET /v1/voices", s.handleVoices)
+	protected := func(handler http.Handler) http.Handler {
+		if s.authStore == nil {
+			return handler
+		}
+		return AuthMiddleware(s.authStore)(handler)
+	}
+
+	s.mux.Handle("POST /v1/speak", protected(http.HandlerFunc(s.handleSpeak)))
+	s.mux.Handle("POST /v1/tts", protected(http.HandlerFunc(s.handleSpeak)))
+	s.mux.Handle("POST /v1/listen", protected(http.HandlerFunc(s.handleListen)))
+	s.mux.Handle("GET /v1/models", protected(http.HandlerFunc(s.handleModels)))
+	s.mux.Handle("GET /v1/voices", protected(http.HandlerFunc(s.handleVoices)))
 	s.mux.HandleFunc("GET /v1/status", s.handleStatus)
 
-	s.mux.HandleFunc("GET /debug/pprof/", pprof.Index)
-	s.mux.HandleFunc("GET /debug/pprof/cmdline", pprof.Cmdline)
-	s.mux.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
-	s.mux.HandleFunc("GET /debug/pprof/symbol", pprof.Symbol)
-	s.mux.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
-	s.mux.Handle("GET /debug/pprof/heap", pprof.Handler("heap"))
-	s.mux.Handle("GET /debug/pprof/allocs", pprof.Handler("allocs"))
-	s.mux.Handle("GET /debug/pprof/goroutine", pprof.Handler("goroutine"))
+	s.mux.Handle("GET /debug/pprof/", protected(http.HandlerFunc(pprof.Index)))
+	s.mux.Handle("GET /debug/pprof/cmdline", protected(http.HandlerFunc(pprof.Cmdline)))
+	s.mux.Handle("GET /debug/pprof/profile", protected(http.HandlerFunc(pprof.Profile)))
+	s.mux.Handle("GET /debug/pprof/symbol", protected(http.HandlerFunc(pprof.Symbol)))
+	s.mux.Handle("GET /debug/pprof/trace", protected(http.HandlerFunc(pprof.Trace)))
+	s.mux.Handle("GET /debug/pprof/heap", protected(pprof.Handler("heap")))
+	s.mux.Handle("GET /debug/pprof/allocs", protected(pprof.Handler("allocs")))
+	s.mux.Handle("GET /debug/pprof/goroutine", protected(pprof.Handler("goroutine")))
 
 	return s, nil
 }
