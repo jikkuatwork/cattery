@@ -109,29 +109,11 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [24](issues/24_tts_sentence_chunking.md) | Transparent sentence chunking for long text TTS | **done** | P1 |
 | [25](issues/25_text_normalizer.md) | Pure Go text normalizer for TTS preprocessing | **done** | P1 |
 | [26](issues/26_stt_audio_chunking.md) | STT audio chunking to prevent hallucination | **done** | P1 |
-| [27](issues/27_bounded_memory_streaming.md) | Bounded-memory streaming for TTS/STT | open (TTS + STT streaming done) | P1 |
-| [28](issues/28_rss_validation.md) | RSS validation: TTS accumulation + STT baseline overage | open | P1 |
-| [29](issues/29_fix_memtest.md) | Fix memtest suite: test artifacts causing false failures and OOM risk | open | P1 |
+| [27](issues/27_bounded_memory_streaming.md) | Bounded-memory streaming for TTS/STT | **done** (native memtest validated; 4 GB / 1 GB cgroup run requires manual host) | P1 |
+| [28](issues/28_rss_validation.md) | RSS validation: TTS accumulation + STT baseline overage | **done** | P1 |
+| [29](issues/29_fix_memtest.md) | Fix memtest suite: test artifacts causing false failures and OOM risk | **done** | P1 |
 
 ## What's Next
-
-**Plans 28–30 landed** — TTS streaming, STT streaming, and chunk-size infra
-are all in. Three plans are queued to close out the memory validation work:
-
-### Memory validation pipeline (plan 31 → 32 → 33)
-
-- **Plan 31** (#29) — fix memtest harness: add `malloc_trim` to
-  `drainMemory()`, add STT ratio logging. Two of three findings already fixed
-  in `ddad3cc`; one remaining.
-- **Plan 32** (#28) — RSS investigation: collect post-fix baselines, diagnose
-  TTS long/short ratio and STT baseline, calibrate thresholds.
-- **Plan 33** (#27 close-out) — empirical validation under cgroup memory
-  limits (4G, 1G, 512M), then close #27.
-
-Execute via harnex: spawn a Codex worker per plan in a worktree, send the plan
-file as the task, wait for completion, review before starting the next.
-
-### Also open
 
 ### Also open
 

@@ -1,7 +1,7 @@
 ---
 id: 28
 title: "RSS validation: investigate TTS accumulation and STT baseline overage"
-status: open
+status: done
 priority: P1
 depends_on: "#27 (bounded-memory streaming), memtest suite"
 created: 2026-03-23
@@ -9,7 +9,7 @@ created: 2026-03-23
 
 # 28 — RSS validation: investigate TTS accumulation and STT baseline overage
 
-## Status: open
+## Status: done
 ## Priority: P1
 ## Depends on: #27 (bounded-memory streaming)
 
