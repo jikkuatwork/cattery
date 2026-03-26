@@ -1,6 +1,6 @@
 # 30 — Rename speak/listen to tts/stt
 
-## Status: open
+## Status: done (plan 35)
 ## Priority: P2
 ## Depends on: nothing (standalone refactor)
 

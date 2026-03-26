@@ -45,9 +45,9 @@ func run() error {
 
 	// Subcommands (info/management only)
 	switch args[0] {
-	case "tts", "speak":
+	case "tts":
 		return cmdTTS(args[1:])
-	case "stt", "listen":
+	case "stt":
 		return cmdSTT(args[1:])
 	case "keys":
 		return cmdKeys(args[1:])
@@ -102,12 +102,12 @@ func cmdServe(args []string) error {
 			if i < len(args) {
 				fmt.Sscanf(args[i], "%d", &cfg.Port)
 			}
-		case "--workers", "--speak-workers", "--tts-workers", "-w":
+		case "--tts-workers", "-w":
 			i++
 			if i < len(args) {
 				fmt.Sscanf(args[i], "%d", &cfg.TTSWorkers)
 			}
-		case "--listen-workers", "--stt-workers":
+		case "--stt-workers":
 			i++
 			if i < len(args) {
 				fmt.Sscanf(args[i], "%d", &cfg.STTWorkers)
@@ -138,7 +138,7 @@ func cmdServe(args []string) error {
 				return fmt.Errorf("missing value for --chunk-size")
 			}
 			chunkSizeFlag = args[i]
-		case "--model", "--speak-model", "--tts-model":
+		case "--model", "--tts-model":
 			i++
 			if i < len(args) {
 				index, err := resolveServeModelIndex(registry.KindTTS, args[i])
@@ -147,7 +147,7 @@ func cmdServe(args []string) error {
 				}
 				cfg.TTSModel = index
 			}
-		case "--listen-model", "--stt-model":
+		case "--stt-model":
 			i++
 			if i < len(args) {
 				index, err := resolveServeModelIndex(registry.KindSTT, args[i])
@@ -636,14 +636,6 @@ Keys:
   cattery keys revoke cat_a1b2c3d4
   cattery keys delete cat_a1b2c3d4
 
-Compatibility aliases:
-  cattery speak ...               Alias for cattery tts
-  cattery listen ...              Alias for cattery stt
-  --speak-workers, -w, --workers  Alias for --tts-workers
-  --listen-workers                Alias for --stt-workers
-  --speak-model                   Alias for --tts-model
-  --listen-model                  Alias for --stt-model
-
 Chunk size:
   CATTERY_CHUNK_SIZE   Shared override for tts, stt, and serve
   Auto default         10s <=512MB, 15s <=1GB, 20s <=2GB, 30s <=4GB,
@@ -779,9 +771,9 @@ func parseKind(ref string) (registry.Kind, error) {
 
 func parseKindAlias(ref string) (registry.Kind, bool) {
 	switch strings.ToLower(strings.TrimSpace(ref)) {
-	case "speak", "tts":
+	case "tts":
 		return registry.KindTTS, true
-	case "listen", "stt":
+	case "stt":
 		return registry.KindSTT, true
 	case "runtime", "ort":
 		return registry.KindRuntime, true
@@ -978,7 +970,7 @@ func displayCommandNames() []string {
 }
 
 func knownCommandNames() []string {
-	return []string{"tts", "stt", "speak", "listen", "serve", "keys", "list", "status", "download", "help", "version"}
+	return []string{"tts", "stt", "serve", "keys", "list", "status", "download", "help", "version"}
 }
 
 func resolveServeModelIndex(kind registry.Kind, ref string) (int, error) {

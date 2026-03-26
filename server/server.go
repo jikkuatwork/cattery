@@ -3,9 +3,7 @@
 // Endpoints:
 //
 //	POST /v1/tts      — synthesize text, returns WAV audio
-//	POST /v1/speak    — alias for /v1/tts
 //	POST /v1/stt      — transcribe audio, returns JSON
-//	POST /v1/listen   — alias for /v1/stt
 //	GET  /v1/models   — list available TTS + STT models
 //	GET  /v1/voices   — list available TTS voices
 //	GET  /v1/status   — server health and pool stats
@@ -345,9 +343,7 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	s.mux.Handle("POST /v1/tts", protected(http.HandlerFunc(s.handleTTS)))
-	s.mux.Handle("POST /v1/speak", protected(http.HandlerFunc(s.handleTTS)))
 	s.mux.Handle("POST /v1/stt", protected(http.HandlerFunc(s.handleSTT)))
-	s.mux.Handle("POST /v1/listen", protected(http.HandlerFunc(s.handleSTT)))
 	s.mux.Handle("GET /v1/models", protected(http.HandlerFunc(s.handleModels)))
 	s.mux.Handle("GET /v1/voices", protected(http.HandlerFunc(s.handleVoices)))
 	s.mux.HandleFunc("GET /v1/status", s.handleStatus)

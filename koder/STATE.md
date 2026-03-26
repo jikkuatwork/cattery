@@ -21,15 +21,14 @@ cattery "Hello, world."
 
 ```
 cattery/
-├── .codex/
-│   └── skills/       # Repo-local Codex workflow skills (`open`, `close`)
 ├── cmd/
 │   ├── cattery/       # CLI
 │   └── spike/         # Original spike (reference, has timing)
-├── engine/            # ONNX inference, tokenizer, voice loading
+├── tts/               # TTS engine interface + Kokoro implementation
+├── stt/               # STT engine interface + Moonshine implementation
 ├── phonemize/         # espeak-ng IPA phonemizer
 ├── audio/             # Pure Go WAV writer
-├── download/          # Auto-download with progress bars and checksum verification where hashes are recorded
+├── download/          # Auto-download with progress bars and checksum verification
 ├── server/            # REST API server with lazy engine pool
 ├── preflight/         # System readiness checks (RAM, deps)
 ├── registry/          # Model/voice metadata registry
@@ -41,20 +40,18 @@ cattery/
 ## CLI Commands
 
 ```
-cattery "Hello, world."          # speak with random voice
-cattery --voice 3 "Hello"       # pick voice by number
-cattery --voice bella "Hello"    # pick voice by name
-cattery --female "Hello"         # random female voice
-cattery --male "Hello"           # random male voice
-cattery --speed 1.5 -o out.wav   # speed + output file
-cattery list                     # show models + voices (numbered)
-cattery status                   # platform, deps, disk usage
+cattery "Hello, world."          # TTS with random voice
+cattery tts --voice bella "Hi"   # pick voice by name
+cattery tts --female "Hello"     # random female voice
+cattery tts --speed 1.5 -o out.wav
+cattery stt recording.wav        # transcribe audio
+cattery status                   # platform, models, disk usage
 cattery download                 # pre-fetch model + all voices
-cattery serve                    # REST API on :7100 (lazy, 1 worker)
-cattery serve --port 8080 -w 2   # custom speak workers
-cattery serve --listen-workers 2 # custom STT workers
-cattery serve --keep-alive       # pre-warm engines, never evict
-cattery serve --idle-timeout 60  # evict engines after 60s idle
+cattery serve                    # REST API on :7100
+cattery serve --port 8080 -w 2   # custom TTS workers
+cattery serve --stt-workers 2    # custom STT workers
+cattery serve --auth             # require API keys
+cattery help --advanced          # full flag/command reference
 ```
 
 ## Downloads (no auth, stable URLs)
@@ -112,23 +109,18 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [27](issues/27_bounded_memory_streaming.md) | Bounded-memory streaming for TTS/STT | **done** (native memtest validated; 4 GB / 1 GB cgroup run requires manual host) | P1 |
 | [28](issues/28_rss_validation.md) | RSS validation: TTS accumulation + STT baseline overage | **done** | P1 |
 | [29](issues/29_fix_memtest.md) | Fix memtest suite: test artifacts causing false failures and OOM risk | **done** | P1 |
-| [30](issues/30_rename_verbs.md) | Rename speak/listen → tts/stt/llm/lvm | open | P2 |
-| [31](issues/31_simplified_ux.md) | Simplified default UX with --advanced escape hatch | open | P2 |
+| [30](issues/30_rename_verbs.md) | Rename speak/listen → tts/stt | **done** (plan 35) | P2 |
+| [31](issues/31_simplified_ux.md) | Simplified default UX with --advanced escape hatch | **done** (plan 35) | P2 |
 
 ## What's Next
 
-**Memory validation pipeline complete** (plans 31–33). #27, #28, #29 closed.
-Remaining cgroup validation (4G/1G/512M) is manual — see `scripts/memtest-constrained.sh`.
-
-**#11 Server auth done** (plan 34). `--auth` flag, `keys.json`, Bearer middleware, per-key rate limiting.
-#23 OpenAI remote engines **deferred** — staying pure local for now.
+**#30 + #31 done** (plan 35). Packages renamed `speak/` → `tts/`, `listen/` → `stt/`.
+CLI subcommands are `tts`/`stt`. Default help is minimal; `--advanced` reveals model selection,
+`list`, `keys`, server tuning. No legacy aliases — old `speak`/`listen` commands and `/v1/speak`/`/v1/listen` routes removed.
 
 ### Open
 
-
 - **#22 Bundle espeak-ng** — eliminate the only system dependency
-- **#30 Rename verbs** — speak/listen → tts/stt across CLI, API, packages
-- **#31 Simplified UX** — hide `list` and model selection by default, `--advanced` to reveal
 - **#12 LLM proxy** — unified AI backend (`cattery think`)
 - **#07** License compliance follow-through
 - ~~**#23 OpenAI remote engines**~~ — deferred (pure local focus)
@@ -177,7 +169,7 @@ Remaining cgroup validation (4G/1G/512M) is manual — see `scripts/memtest-cons
   `cmdServe`, and `server.New` all resolve chunk size the same way; Moonshine
   consumes it for streaming STT windows, while Kokoro accepts the field but
   still chunks by token budget in this pass.
-- **Multi-modal package naming**: CLI verbs = package names = API paths. `speak/` (TTS), `listen/` (STT), future `think/` (LLM), `see/` (vision). Each has an `Engine` interface + per-model subdirectories (e.g. `speak/kokoro/`, `listen/moonshine/`). The "cattery = place where cats live, verbs = cats" metaphor is for branding/website — code uses clean verbs.
+- **Multi-modal package naming**: packages = modality abbreviations = API paths. `tts/` (text-to-speech), `stt/` (speech-to-text), future `llm/` (language model). Each has an `Engine` interface + per-model subdirectories (e.g. `tts/kokoro/`, `stt/moonshine/`). Default CLI/help shows one model per modality; `--advanced` reveals multi-model plumbing.
 - **Pi4 viability confirmed**: TTS+STT hot = ~250MB RAM, 2-4s round-trip for voice message bot. Comfortable on Pi4 4GB.
 - **Zero system deps goal**: bundle espeak-ng binary + data in `~/.cattery/`, auto-download like ORT/models. No `apt install` needed.
 - **Remote models are just models**: no `--remote` flag. OpenAI engines are registered models (`openai-tts-1`, `openai-whisper-1`) selected via `--model`. Remote models only appear in `cattery list` when `OPENAI_API_KEY` is set. Default is always local — no accidental API spend. `OPENAI_BASE_URL` supports OpenRouter, Ollama, Azure. No SDK — pure `net/http`.

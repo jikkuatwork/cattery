@@ -7,8 +7,8 @@ import (
 	"github.com/jikkuatwork/cattery/registry"
 )
 
-func TestParseSelectionArgsSupportsVerbAliases(t *testing.T) {
-	kind, modelRef, err := parseSelectionArgs([]string{"listen", "--model", "1"})
+func TestParseSelectionArgs(t *testing.T) {
+	kind, modelRef, err := parseSelectionArgs([]string{"stt", "--model", "1"})
 	if err != nil {
 		t.Fatalf("parseSelectionArgs error: %v", err)
 	}
@@ -33,12 +33,6 @@ func TestLooksLikeCommandIncludesNewVerbs(t *testing.T) {
 	}
 	if !looksLikeCommand("stt") {
 		t.Fatal("expected stt to look like a command")
-	}
-	if !looksLikeCommand("speak") {
-		t.Fatal("expected speak to look like a command")
-	}
-	if !looksLikeCommand("listen") {
-		t.Fatal("expected listen to look like a command")
 	}
 	if !looksLikeCommand("keys") {
 		t.Fatal("expected keys to look like a command")

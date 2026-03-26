@@ -1,6 +1,6 @@
 # 31 — Simplified default UX with --advanced escape hatch
 
-## Status: open
+## Status: done (plan 35)
 ## Priority: P2
 ## Depends on: nothing
 
