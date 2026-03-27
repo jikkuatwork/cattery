@@ -14,6 +14,7 @@ type Kind string
 const (
 	KindTTS       Kind = "tts"
 	KindSTT       Kind = "stt"
+	KindLLM       Kind = "llm"
 	KindVoice     Kind = "voice"
 	KindTokenizer Kind = "tokenizer"
 	KindRuntime   Kind = "runtime"
@@ -62,6 +63,7 @@ type Voice struct {
 const (
 	kokoroModelID    = "kokoro-82m-v1.0"
 	moonshineModelID = "moonshine-tiny-v1.0"
+	qwenModelID      = "qwen3.5-4b-v1.0"
 	ortModelID       = "ort-1.24.4"
 	defaultVoiceSize = 522_240
 )
@@ -156,6 +158,84 @@ var models = []*Model{
 			"max_steps":      "448",
 			"bos_token":      "1",
 			"eos_token":      "2",
+		},
+	},
+	{
+		Index:       1,
+		ID:          qwenModelID,
+		Kind:        KindLLM,
+		Location:    Local,
+		Name:        "Qwen 3.5 4B",
+		Description: "Int4 quantized local LLM",
+		Lang:        []string{"en", "zh"},
+		Files: []Artefact{
+			{
+				Filename:  "onnx/decoder_model_merged_q4.onnx",
+				SizeBytes: 1_206_737,
+				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/onnx/decoder_model_merged_q4.onnx",
+			},
+			{
+				Filename:  "onnx/decoder_model_merged_q4.onnx_data",
+				SizeBytes: 2_093_368_320,
+				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/onnx/decoder_model_merged_q4.onnx_data",
+			},
+			{
+				Filename:  "onnx/decoder_model_merged_q4.onnx_data_1",
+				SizeBytes: 607_298_560,
+				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/onnx/decoder_model_merged_q4.onnx_data_1",
+			},
+			{
+				Filename:  "onnx/embed_tokens_q4.onnx",
+				SizeBytes: 857,
+				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/onnx/embed_tokens_q4.onnx",
+			},
+			{
+				Filename:  "onnx/embed_tokens_q4.onnx_data",
+				SizeBytes: 407_244_800,
+				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/onnx/embed_tokens_q4.onnx_data",
+			},
+			{
+				Filename:  "tokenizer.json",
+				SizeBytes: 19_226_111,
+				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/tokenizer.json",
+			},
+			{
+				Filename:  "config.json",
+				SizeBytes: 3_198,
+				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/config.json",
+			},
+			{
+				Filename:  "generation_config.json",
+				SizeBytes: 248,
+				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/generation_config.json",
+			},
+			{
+				Filename:  "tokenizer_config.json",
+				SizeBytes: 9_162,
+				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/tokenizer_config.json",
+			},
+			{
+				Filename:  "chat_template.jinja",
+				SizeBytes: 7_756,
+				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/chat_template.jinja",
+			},
+		},
+		Meta: map[string]string{
+			"decoder_file":           "onnx/decoder_model_merged_q4.onnx",
+			"decoder_data_files":     "onnx/decoder_model_merged_q4.onnx_data,onnx/decoder_model_merged_q4.onnx_data_1",
+			"embed_file":             "onnx/embed_tokens_q4.onnx",
+			"embed_data_files":       "onnx/embed_tokens_q4.onnx_data",
+			"tokenizer_file":         "tokenizer.json",
+			"config_file":            "config.json",
+			"generation_config_file": "generation_config.json",
+			"tokenizer_config_file":  "tokenizer_config.json",
+			"chat_template_file":     "chat_template.jinja",
+			"context_window":         "262144",
+			"hidden_size":            "2560",
+			"num_layers":             "32",
+			"num_heads":              "16",
+			"num_kv_heads":           "4",
+			"eos_token":              "248044",
 		},
 	},
 	{

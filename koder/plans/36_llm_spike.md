@@ -75,6 +75,10 @@ integration is attempted.
 
 ## Spike 1 — ONNX Model Availability
 
+### Status
+
+Complete on March 28, 2026.
+
 ### Goal
 
 Prove that Qwen3.5-4B can be treated as a normal cattery local artefact:
@@ -131,6 +135,47 @@ pattern already used for Kokoro and Moonshine.
 - A future implementation can add a registry entry without needing more model
   discovery work.
 
+### Findings
+
+- Verified upstream repo: `https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX`
+  with text-only q4 artefacts fetched from `resolve/main/...`.
+- Exact text-only q4 inventory and byte sizes:
+  - `onnx/decoder_model_merged_q4.onnx` — `1,206,737`
+  - `onnx/decoder_model_merged_q4.onnx_data` — `2,093,368,320`
+  - `onnx/decoder_model_merged_q4.onnx_data_1` — `607,298,560`
+  - `onnx/embed_tokens_q4.onnx` — `857`
+  - `onnx/embed_tokens_q4.onnx_data` — `407,244,800`
+  - `tokenizer.json` — `19,226,111`
+  - `config.json` — `3,198`
+  - `generation_config.json` — `248`
+  - `tokenizer_config.json` — `9,162`
+  - `chat_template.jinja` — `7,756`
+  - Total — `3,128,365,749` bytes (`~2.91 GiB`)
+- Downloader check: [`download/download.go`](/home/glasscube/Projects/cattery/download/download.go)
+  already downloads each `registry.Artefact` filename independently, so split
+  `.onnx_data` shards work without downloader changes as long as every shard is
+  listed as its own file in the registry.
+- `embed_tokens_q4` is still likely required for text-only runtime. This is an
+  inference, not a proven runtime fact yet: the export names the decoder file
+  `decoder_model_merged_q4`, but the repo still ships a separate
+  `embed_tokens_q4` graph and `config.json` advertises external data for both
+  `embed_tokens` and `decoder_model_merged_q4`. Until Spike 3 proves the graph
+  accepts raw `input_ids` end to end, the safer assumption is a two-session
+  runtime: embed session plus merged decoder session.
+- Hosting decision: start with direct Hugging Face URLs in the registry and
+  defer mirroring to `cattery-artefacts` until the runtime path is proven.
+  `~2.91 GiB` is plausible but borderline for Git LFS-based mirroring, and
+  there is no value in duplicating the bundle before decode viability is
+  confirmed.
+- Verified config metadata from upstream files:
+  - `config.json` `text_config.hidden_size` — `2560`
+  - `config.json` `text_config.num_hidden_layers` — `32`
+  - `config.json` `text_config.num_attention_heads` — `16`
+  - `config.json` `text_config.num_key_value_heads` — `4`
+  - `config.json` `text_config.max_position_embeddings` — `262144`
+  - `config.json` `text_config.eos_token_id` — `248044`
+  - `generation_config.json` `eos_token_id` — `[248046, 248044]`
+
 ### Estimated effort
 
 `0.5-1 day`
@@ -147,6 +192,10 @@ pattern already used for Kokoro and Moonshine.
   as the implementation spike target while keeping 4B as the product target.
 
 ## Spike 2 — Go Tokenizer
+
+### Status
+
+Complete on March 28, 2026.
 
 ### Goal
 
@@ -205,6 +254,62 @@ acceptable correctness and negligible latency, without adding Python or CGo.
   needed to match Qwen chat prompts.
 - Fallback: if no existing library is good enough, write a narrow BPE loader
   for Qwen assets instead of adopting a large general tokenizer dependency.
+
+### Findings
+
+- Added spike binary: [`cmd/spike-tokenizer/main.go`](/home/glasscube/Projects/cattery/cmd/spike-tokenizer/main.go).
+  It downloads `tokenizer.json` and `tokenizer_config.json` from
+  `onnx-community/Qwen3.5-4B-ONNX`, loads the tokenizer, renders a hard-coded
+  ChatML prompt, and prints prompt -> token IDs -> decoded text -> round-trip.
+- Library evaluation:
+  - `github.com/daulet/tokenizers` can load Hugging Face `tokenizer.json`, but
+    it requires a separately built/downloaded Rust `libtokenizers` static
+    library plus CGo. That adds a new native dependency beyond the existing ORT
+    boundary, so it is not the preferred production path here.
+  - `github.com/pkoukk/tiktoken-go` is a tiktoken loader. It can work with
+    OpenAI-style BPE rank tables, but it is not a direct fit for Hugging Face
+    `tokenizer.json` and would still require custom conversion logic.
+  - `github.com/sugarme/tokenizer` is pure Go and can parse Hugging Face-style
+    tokenizer configs, but it failed on the real Qwen tokenizer: the
+    pretokenizer regex in `tokenizer.json` contains negative lookahead
+    (`\\s+(?!\\S)`), which caused a panic because the library routes that regex
+    through Go's `regexp`, which does not support Perl lookarounds.
+- Chosen approach for the spike: a narrow pure Go loader in the spike binary
+  itself, not a reusable package yet. It implements only the pieces required by
+  Qwen's current tokenizer JSON:
+  - NFC normalization
+  - the Hugging Face split regex via `github.com/dlclark/regexp2`
+  - GPT-2/Qwen byte-level byte<->unicode mapping
+  - BPE merge ranking loaded directly from `tokenizer.json`
+  - exact special-token extraction for added tokens such as
+    `<|im_start|>`, `<|im_end|>`, and `<|endoftext|>`
+- Special-token handling is correct in the spike:
+  - `<|endoftext|>` -> `248044`
+  - `<|im_start|>` -> `248045`
+  - `<|im_end|>` -> `248046`
+  - The chat prompt
+    `<|im_start|>system\n...\n<|im_start|>assistant\n`
+    encodes with explicit special-token IDs and decodes back to the original
+    prompt exactly.
+- Encode/decode correctness from the spike:
+  - `"Hello, world!"` -> `[9419 11 1814 0]` -> round-trip `true`
+  - `"What is the capital of France?"` -> `[3710 369 279 6511 314 9338 30]` -> round-trip `true`
+  - `"func main() { fmt.Println(\"hello\") }"` -> `[2739 1822 363 313 8611 12063 437 14556 871 333]` -> round-trip `true`
+  - `"日本語のテスト"` -> `[247359 15303 181801]` -> round-trip `true`
+  - ChatML prompt with `<|im_start|>` / `<|im_end|>` -> round-trip `true`
+- Registry/download decision stays the same as Spike 1: `tokenizer.json` is
+  sufficient. The spike loads vocab, merges, byte-level config, and added
+  tokens directly from that single file; no separate `vocab.json` or
+  `merges.txt` is required.
+- Gotcha: the downloaded ONNX-community `tokenizer_config.json` currently
+  reports `tokenizer_class: "TokenizersBackend"` in the spike environment, not
+  `Qwen2Tokenizer`. The tokenizer behavior still matches the Qwen byte-level
+  BPE layout, so the JSON contents matter more than the class string.
+- Recommendation for implementation after the spike:
+  keep the runtime path pure Go and extract a small internal tokenizer adapter
+  from this spike rather than adopting either a new CGo/Rust dependency or a
+  large generic tokenizer library that does not fully support Qwen's regex
+  pretokenizer.
 
 ## Spike 3 — KV-Cache Autoregressive Decode in `onnxruntime_go`
 
@@ -288,6 +393,80 @@ per-token stepping.
 - Fallback: if cache wiring or throughput is impractical, evaluate a very thin
   CGo bridge to `onnxruntime-genai` while still keeping the registry, download,
   and pool layers in Go.
+
+### Findings
+
+- Added spike binary: [`cmd/spike-llm/main.go`](/home/glasscube/Projects/cattery/cmd/spike-llm/main.go).
+  It downloads the text-only `Qwen3.5-0.8B-ONNX` q4 artefacts into
+  `models-data/qwen3.5-0.8b/`, initializes ORT from `~/.cattery/ort/`,
+  prints the exact embed/decoder graph signatures, tokenizes a ChatML prompt,
+  runs `embed_tokens_q4.onnx`, then performs greedy autoregressive decode with
+  per-step cache replacement until EOS or `max_tokens`.
+- Runtime proved that the merged decoder does **not** accept `input_ids`
+  directly. The text path is a required two-session pipeline for this model:
+  `input_ids -> embed_tokens_q4 -> inputs_embeds -> decoder_model_merged_q4`.
+- Exact 0.8B graph contract observed from `onnxruntime_go.GetInputOutputInfo`:
+  - Embed input:
+    `input_ids` `int64[-1,-1]`
+  - Embed output:
+    `inputs_embeds` `float32[-1,-1,1024]`
+  - Decoder core inputs:
+    `inputs_embeds` `float32[-1,-1,1024]`
+    `attention_mask` `int64[-1,-1]`
+    `position_ids` `int64[3,-1,-1]`
+  - Decoder state inputs, repeated per layer:
+    `past_conv.N` `float32[-1,6144,4]` for layers
+    `0,1,2,4,5,6,8,9,10,12,13,14,16,17,18,20,21,22`
+    `past_recurrent.N` `float32[-1,16,128,128]` for the same layers
+    `past_key_values.N.key` / `past_key_values.N.value`
+    `float32[-1,2,-1,256]` for layers `3,7,11,15,19,23`
+  - Decoder outputs:
+    `logits` `float32[-1,-1,248320]`
+    plus matching `present_conv.N`, `present_recurrent.N`, and
+    `present.N.key` / `present.N.value` tensors with the same shapes.
+- Important decode detail: `Qwen3.5-0.8B` is a **hybrid** export, not a plain
+  transformer-only KV-cache model. The first-pass Moonshine-style logic was not
+  enough; the spike had to preserve three state families:
+  convolution state, recurrent state, and sparse full-attention KV state.
+  Initial state tensors that worked:
+  - `past_conv.*` -> zero-filled `[1,6144,4]`
+  - `past_recurrent.*` -> zero-filled `[1,16,128,128]`
+  - `past_key_values.*` -> empty `[1,2,0,256]`
+  - `position_ids` -> text-only `[3,1,seq]` with the same scalar positions
+    repeated across the leading `3` plane required by the exported mRoPE layout
+- The autoregressive loop now works end to end on the 0.8B model in pure Go.
+  Sample prompt:
+  `<|im_start|>user\nWrite one short sentence about cats.<|im_end|>\n<|im_start|>assistant\n`
+  generated:
+  `<think>\n\n</think>\n\nCats are known for their playful antics and silent communication through their purrs.<|im_end|>`
+- Measured on this amd64 Linux workstation on March 28, 2026:
+  - First-token latency: `643.455038ms`
+  - Steady-state throughput: `7.58 tok/s`
+  - Peak RSS (`/proc/self/status` `VmHWM`): `775.62 MiB`
+  - Total generation time for 21 output tokens: `3.280845169s`
+- Tokenizer follow-up discovered during Spike 3:
+  decode must map **all** `added_tokens`, not only `special` ones, because the
+  model can emit non-special added tokens such as `<think>` / `</think>`.
+- Decode loop complexity assessment:
+  - `onnxruntime_go` itself is sufficient. Dynamic sessions, dynamic output
+    allocation, and explicit value destruction are enough for local generation.
+  - The difficult part is model-specific state plumbing, not ORT bindings.
+  - The `0.8B` export is materially more complex than the expected `4B`
+    transformer-style cache pattern because of its hybrid linear-attention /
+    recurrent blocks.
+- Recommendation:
+  - **Go** for a pure-Go ORT local LLM path in principle.
+  - **Conditional** on target model choice: this exact 0.8B contract is viable,
+    but it is more complex than the original 4B assumptions.
+  - For the product target, inspect the 4B graph before implementation rather
+    than assuming the 0.8B state layout carries over. The same high-level
+    architecture should still work:
+    separate embed session,
+    dynamic decoder session,
+    per-step state replacement,
+    explicit `Destroy()` discipline.
+    But the exact state tensor set must be rediscovered from the 4B ONNX graph
+    first.
 
 ## Recommended Execution Order
 
