@@ -60,12 +60,10 @@ type Voice struct {
 }
 
 const (
-	kokoroModelID        = "kokoro-82m-v1.0"
-	moonshineModelID     = "moonshine-tiny-v1.0"
-	ortModelID           = "ort-1.24.4"
-	defaultVoiceSize     = 522_240
-	moonshineHFBaseURL   = "https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/main"
-	moonshineONNXBaseURL = moonshineHFBaseURL + "/onnx"
+	kokoroModelID    = "kokoro-82m-v1.0"
+	moonshineModelID = "moonshine-tiny-v1.0"
+	ortModelID       = "ort-1.24.4"
+	defaultVoiceSize = 522_240
 )
 
 var models = []*Model{
@@ -137,17 +135,14 @@ var models = []*Model{
 			{
 				Filename:  "encoder_model_quantized.onnx",
 				SizeBytes: 7_937_661,
-				URL:       moonshineONNXBaseURL + "/encoder_model_quantized.onnx",
 			},
 			{
 				Filename:  "decoder_model_merged_quantized.onnx",
 				SizeBytes: 20_243_286,
-				URL:       moonshineONNXBaseURL + "/decoder_model_merged_quantized.onnx",
 			},
 			{
 				Filename:  "tokenizer.json",
 				SizeBytes: 3_761_754,
-				URL:       moonshineHFBaseURL + "/tokenizer.json",
 			},
 		},
 		Meta: map[string]string{

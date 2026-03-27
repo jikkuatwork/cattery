@@ -16,7 +16,7 @@ func DataDir() string {
 
 // ModelDir returns the path for a model's files within the data directory.
 func ModelDir(dataDir, modelID string) string {
-	return filepath.Join(dataDir, "models", modelID)
+	return filepath.Join(dataDir, "artefacts", "models", modelID)
 }
 
 // ArtefactFile returns the path for a model artefact.
