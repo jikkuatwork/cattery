@@ -26,6 +26,7 @@ cattery/
 │   └── spike/         # Original spike (reference, has timing)
 ├── tts/               # TTS engine interface + Kokoro implementation
 ├── stt/               # STT engine interface + Moonshine implementation
+├── llm/               # LLM engine interface + Qwen implementation
 ├── phonemize/         # espeak-ng IPA phonemizer
 ├── audio/             # Pure Go WAV writer
 ├── download/          # Auto-download with progress bars and checksum verification
@@ -45,6 +46,8 @@ cattery tts --voice bella "Hi"   # pick voice by name
 cattery tts --female "Hello"     # random female voice
 cattery tts --speed 1.5 -o out.wav
 cattery stt recording.wav        # transcribe audio
+cattery llm "What is the capital of France?"  # local LLM
+cattery llm --system "You are helpful" "Hi"
 cattery status                   # platform, models, disk usage
 cattery download                 # pre-fetch model + all voices
 cattery serve                    # REST API on :7100
@@ -58,7 +61,9 @@ cattery help --advanced          # full flag/command reference
 
 | Asset | Source | Size |
 |---|---|---|
-| Model + voices | `jikkuatwork/cattery-artefacts` (Git LFS) | 88MB + 13MB |
+| TTS model + voices | `jikkuatwork/cattery-artefacts` (Git LFS) | 88MB + 13MB |
+| STT model | `jikkuatwork/cattery-artefacts` (Git LFS) | 28MB |
+| LLM model (Qwen3.5-4B q4) | HuggingFace `onnx-community/Qwen3.5-4B-ONNX` | ~2.91 GiB |
 | ORT runtime | Microsoft GitHub Releases | 18MB |
 
 Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.cattery/`; `espeak-ng` is not bundled.
@@ -92,7 +97,7 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [10](issues/10_server_api_audit.md) | Server API audit for apps | **done** (subsumed by #21) | P2 |
 | [11](issues/11_server_auth.md) | Optional server auth | **done** (plan 34) | P2 |
 | [12](issues/12_llm_proxy.md) | LLM proxy (Ollama/OpenRouter) | open | P2 |
-| [13](issues/13_local_4b_model.md) | Local LLM via ONNX | open (research done, spike plan 36) | P1 |
+| [13](issues/13_local_4b_model.md) | Local LLM via ONNX | **done** (plan 36 spikes + plan 37 implementation) | P1 |
 | [14](issues/14_web_ui.md) | Embedded web UI | open | P3 |
 | [15](issues/15_mirror_json.md) | Artefact mirror registry (mirror.json) | **done** | P2 |
 | [16](issues/16_extract_ort_runtime.md) | Extract shared ORT runtime from engine/ | **done** | P0 |
@@ -114,18 +119,15 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 
 ## What's Next
 
-**#15 done** — mirror.json shipped. All artefacts (TTS + STT) now self-hosted in `cattery-artefacts` with no HuggingFace dependency. Download paths restructured under `~/.cattery/artefacts/` to match repo layout. Default mirror selection ready for S3/R2 when needed.
-
-**#13 up next** — Qwen3.5-4B int4 selected as default local LLM. Spike plan 36 written. LLM artefacts will go into `cattery-artefacts` via the same mirror.json pattern.
+**#13 done** — Local LLM shipped. Qwen3.5 via ONNX Runtime in pure Go. `cattery llm "prompt"` works end-to-end. Server exposes OpenAI-compatible `POST /v1/chat/completions` with SSE streaming. Bidirectional engine swapping (STT↔LLM↔TTS) with explicit eviction for Pi4 4GB target. Hybrid architecture (conv + recurrent + sparse KV) handled data-driven from graph metadata.
 
 ### Open
 
-- **#13 Local LLM** — spike plan 36 ready: model availability, Go tokenizer, KV-cache decode loop (~3-4 days)
 - **#22 Bundle espeak-ng** — eliminate the only system dependency
-- **#12 LLM proxy** — unified AI backend (`cattery think`); may merge with #13
-- **#07** License compliance follow-through
+- **#12 LLM proxy** — unified AI backend (`cattery think`); may merge with #13's server endpoint
+- **#07** License compliance follow-through (now includes Qwen3.5 Apache-2.0)
 - ~~**#23 OpenAI remote engines**~~ — deferred (pure local focus)
-- Vision: single-binary conversational system (STT → LLM → TTS) for indie builders on Pi4
+- Vision: single-binary conversational system (STT → LLM → TTS) for indie builders on Pi4 — now architecturally complete
 
 ## Key Decisions Made
 
