@@ -249,3 +249,131 @@ func TestBorrowLLMEvictsIdlePools(t *testing.T) {
 		t.Fatalf("stt evictions = %d, want 1", sttClosed.Load())
 	}
 }
+
+func TestCloseLLMEngineDrainsORT(t *testing.T) {
+	var drained atomic.Int64
+	originalDrain := ortDrain
+	ortDrain = func() {
+		drained.Add(1)
+	}
+	defer func() {
+		ortDrain = originalDrain
+	}()
+
+	var closed atomic.Int64
+	srv := &Server{}
+	err := srv.closeLLMEngine(&fakeLLMEngine{
+		close: func() error {
+			closed.Add(1)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("closeLLMEngine() error = %v", err)
+	}
+	if closed.Load() != 1 {
+		t.Fatalf("llm close count = %d, want 1", closed.Load())
+	}
+	if drained.Load() != 1 {
+		t.Fatalf("ort drain count = %d, want 1", drained.Load())
+	}
+}
+
+func TestSequentialSwapPathEvictsIdlePools(t *testing.T) {
+	model := registry.Default(registry.KindLLM)
+	if model == nil {
+		t.Fatal("missing default LLM model")
+	}
+
+	var ttsClosed atomic.Int64
+	var sttClosed atomic.Int64
+	var llmClosed atomic.Int64
+
+	ttsPool := NewPool(PoolConfig[tts.Engine]{
+		Name:      "tts",
+		Workers:   1,
+		KeepAlive: true,
+		Create:    func() (tts.Engine, error) { return &fakeTTSEngine{}, nil },
+		Close: func(eng tts.Engine) error {
+			ttsClosed.Add(1)
+			return eng.Close()
+		},
+	})
+	sttPool := NewPool(PoolConfig[stt.Engine]{
+		Name:      "stt",
+		Workers:   1,
+		KeepAlive: true,
+		Create:    func() (stt.Engine, error) { return &fakeSTTEngine{}, nil },
+		Close: func(eng stt.Engine) error {
+			sttClosed.Add(1)
+			return eng.Close()
+		},
+	})
+	llmPool := NewPool(PoolConfig[llm.Engine]{
+		Name:      "llm",
+		Workers:   1,
+		KeepAlive: true,
+		Create: func() (llm.Engine, error) {
+			return &fakeLLMEngine{
+				close: func() error {
+					llmClosed.Add(1)
+					return nil
+				},
+			}, nil
+		},
+		Close: func(eng llm.Engine) error {
+			return eng.Close()
+		},
+	})
+
+	if err := ttsPool.Prewarm(); err != nil {
+		t.Fatalf("ttsPool.Prewarm(): %v", err)
+	}
+	if err := sttPool.Prewarm(); err != nil {
+		t.Fatalf("sttPool.Prewarm(): %v", err)
+	}
+
+	srv := &Server{
+		llmModel: model,
+		ttsPool:  ttsPool,
+		sttPool:  sttPool,
+		llmPool:  llmPool,
+	}
+
+	sttEng, err := srv.borrowSTT(context.Background())
+	if err != nil {
+		t.Fatalf("borrowSTT() error = %v", err)
+	}
+	srv.sttPool.Return(sttEng)
+
+	llmEng, err := srv.borrowLLM(context.Background())
+	if err != nil {
+		t.Fatalf("borrowLLM() error = %v", err)
+	}
+	if got := srv.ttsPool.Stats().EnginesReady; got != 0 {
+		t.Fatalf("tts idle after llm borrow = %d, want 0", got)
+	}
+	if got := srv.sttPool.Stats().EnginesReady; got != 0 {
+		t.Fatalf("stt idle after llm borrow = %d, want 0", got)
+	}
+	srv.llmPool.Return(llmEng)
+
+	ttsEng, err := srv.borrowTTS(context.Background())
+	if err != nil {
+		t.Fatalf("borrowTTS() error = %v", err)
+	}
+	if got := srv.llmPool.Stats().EnginesReady; got != 0 {
+		t.Fatalf("llm idle after tts borrow = %d, want 0", got)
+	}
+	srv.ttsPool.Return(ttsEng)
+
+	if ttsClosed.Load() != 1 {
+		t.Fatalf("tts evictions = %d, want 1", ttsClosed.Load())
+	}
+	if sttClosed.Load() != 1 {
+		t.Fatalf("stt evictions = %d, want 1", sttClosed.Load())
+	}
+	if llmClosed.Load() != 1 {
+		t.Fatalf("llm evictions = %d, want 1", llmClosed.Load())
+	}
+}

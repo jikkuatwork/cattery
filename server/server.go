@@ -38,6 +38,8 @@ import (
 	"github.com/jikkuatwork/cattery/tts/kokoro"
 )
 
+var ortDrain = ort.Drain
+
 // Config holds server configuration.
 type Config struct {
 	Port        int
@@ -262,6 +264,7 @@ func New(cfg Config) (*Server, error) {
 	if llmModel.Location != registry.Local {
 		return nil, fmt.Errorf("remote LLM model %q is not supported yet", llmModel.ID)
 	}
+	preflight.WarnLowLLMMemory(os.Stderr, llmModel)
 
 	if !phonemize.Available() {
 		return nil, fmt.Errorf("espeak-ng not found (required)")
@@ -369,9 +372,7 @@ func New(cfg Config) (*Server, error) {
 			}
 			return newLLMEngine(llmModel, dataDir)
 		},
-		Close: func(eng llm.Engine) error {
-			return eng.Close()
-		},
+		Close:   s.closeLLMEngine,
 		OnEmpty: s.onPoolsEmpty,
 	})
 
@@ -734,7 +735,7 @@ func (s *Server) synthesize(
 	model *registry.Model,
 	voice tts.Voice,
 ) (*bytes.Buffer, *synthMeta, error) {
-	eng, err := s.ttsPool.Borrow(ctx, s.queue, &s.queued)
+	eng, err := s.borrowTTS(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -803,6 +804,31 @@ func (s *Server) borrowLLM(ctx context.Context) (llm.Engine, error) {
 		s.sttPool.EvictIdle()
 	}
 	return s.llmPool.Borrow(ctx, s.queue, &s.queued)
+}
+
+func (s *Server) borrowTTS(ctx context.Context) (tts.Engine, error) {
+	if s.llmPool != nil {
+		s.llmPool.EvictIdle()
+	}
+	return s.ttsPool.Borrow(ctx, s.queue, &s.queued)
+}
+
+func (s *Server) borrowSTT(ctx context.Context) (stt.Engine, error) {
+	if s.llmPool != nil {
+		s.llmPool.EvictIdle()
+	}
+	return s.sttPool.Borrow(ctx, s.queue, &s.queued)
+}
+
+func (s *Server) closeLLMEngine(eng llm.Engine) error {
+	if eng == nil {
+		ortDrain()
+		return nil
+	}
+
+	err := eng.Close()
+	ortDrain()
+	return err
 }
 
 func (s *Server) reserveChars(n int) (used int, avail int, ok bool) {

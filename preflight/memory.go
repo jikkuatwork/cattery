@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jikkuatwork/cattery/registry"
 )
 
 const (
@@ -17,6 +19,7 @@ const (
 	DefaultChunkSize    = 30 * time.Second
 	MaxChunkSize        = 60 * time.Second
 	LowMemoryChunkMB    = 512
+	MinLLMMemoryMB      = 3072
 	oneGBInMB           = 1024
 	chunkSizeBoundsText = "10s and 60s"
 )
@@ -38,6 +41,15 @@ type ChunkSizeResolution struct {
 }
 
 var lowMemoryWarningOnce sync.Once
+var llmMemoryWarningOnce sync.Once
+var lookupAvailableMemoryMB = AvailableMemoryMB
+
+// LLMMemoryBudget describes the available memory versus the model target.
+type LLMMemoryBudget struct {
+	AvailableMemoryMB int
+	MinimumMemoryMB   int
+	ModelID           string
+}
 
 // AvailableMemoryMB returns available system memory in MB, or -1 if unknown.
 func AvailableMemoryMB() int {
@@ -142,6 +154,49 @@ func WarnLowMemoryChunkSize(w io.Writer, r ChunkSizeResolution) {
 			w,
 			"warning: low memory (%d MB available) - using minimum 10s chunk size where supported\n",
 			r.AvailableMemoryMB,
+		)
+	})
+}
+
+// ResolveLLMMemoryBudget maps an LLM model to its minimum recommended RAM.
+func ResolveLLMMemoryBudget(model *registry.Model, availableMB int) LLMMemoryBudget {
+	if model == nil || model.Kind != registry.KindLLM {
+		return LLMMemoryBudget{
+			AvailableMemoryMB: availableMB,
+		}
+	}
+
+	minimumMB := model.MetaInt("min_memory_mb", MinLLMMemoryMB)
+	return LLMMemoryBudget{
+		AvailableMemoryMB: availableMB,
+		MinimumMemoryMB:   minimumMB,
+		ModelID:           model.ID,
+	}
+}
+
+// WarnLowLLMMemory prints a soft warning when the current LLM model likely
+// needs more RAM than is currently available.
+func WarnLowLLMMemory(w io.Writer, model *registry.Model) {
+	if w == nil {
+		return
+	}
+
+	budget := ResolveLLMMemoryBudget(model, lookupAvailableMemoryMB())
+	if budget.MinimumMemoryMB <= 0 || budget.AvailableMemoryMB < 0 || budget.AvailableMemoryMB >= budget.MinimumMemoryMB {
+		return
+	}
+
+	llmMemoryWarningOnce.Do(func() {
+		modelID := strings.TrimSpace(budget.ModelID)
+		if modelID == "" {
+			modelID = "local LLM"
+		}
+		fmt.Fprintf(
+			w,
+			"warning: low memory (%d MB available) - %s typically needs at least %d MB and may rely on swap\n",
+			budget.AvailableMemoryMB,
+			modelID,
+			budget.MinimumMemoryMB,
 		)
 	})
 }

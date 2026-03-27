@@ -1,6 +1,6 @@
 # Plan 37 — Production `llm/` Package for Qwen3.5 Local Inference (#13)
 
-## Status: DRAFT
+## Status: DONE
 
 ## Goal
 

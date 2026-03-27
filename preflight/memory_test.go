@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jikkuatwork/cattery/registry"
 )
 
 func TestParseLinuxMemAvailableMB(t *testing.T) {
@@ -118,6 +120,62 @@ func TestWarnLowMemoryChunkSizePrintsOnce(t *testing.T) {
 	}
 	if !strings.Contains(lines[0], "using minimum 10s chunk size") {
 		t.Fatalf("warning = %q", lines[0])
+	}
+}
+
+func TestResolveLLMMemoryBudget(t *testing.T) {
+	model := registry.Default(registry.KindLLM)
+	if model == nil {
+		t.Fatal("missing default LLM model")
+	}
+
+	budget := ResolveLLMMemoryBudget(model, 2048)
+	if budget.MinimumMemoryMB != MinLLMMemoryMB {
+		t.Fatalf("minimum memory = %d, want %d", budget.MinimumMemoryMB, MinLLMMemoryMB)
+	}
+	if budget.AvailableMemoryMB != 2048 {
+		t.Fatalf("available memory = %d, want 2048", budget.AvailableMemoryMB)
+	}
+	if budget.ModelID != model.ID {
+		t.Fatalf("model id = %q, want %q", budget.ModelID, model.ID)
+	}
+}
+
+func TestWarnLowLLMMemoryPrintsOnce(t *testing.T) {
+	llmMemoryWarningOnce = sync.Once{}
+	lookupAvailableMemoryMB = func() int { return MinLLMMemoryMB - 256 }
+	defer func() {
+		lookupAvailableMemoryMB = AvailableMemoryMB
+	}()
+
+	model := registry.Default(registry.KindLLM)
+	if model == nil {
+		t.Fatal("missing default LLM model")
+	}
+
+	var buf bytes.Buffer
+	budget := ResolveLLMMemoryBudget(model, MinLLMMemoryMB-256)
+	if budget.MinimumMemoryMB != MinLLMMemoryMB {
+		t.Fatalf("minimum memory = %d, want %d", budget.MinimumMemoryMB, MinLLMMemoryMB)
+	}
+
+	if budget.AvailableMemoryMB >= budget.MinimumMemoryMB {
+		t.Fatalf("test budget is not low-memory: %+v", budget)
+	}
+
+	WarnLowLLMMemory(&buf, model)
+	WarnLowLLMMemory(&buf, model)
+
+	got := strings.TrimSpace(buf.String())
+	if got == "" {
+		t.Fatal("warning output is empty")
+	}
+	lines := strings.Split(got, "\n")
+	if len(lines) != 1 {
+		t.Fatalf("warning lines = %d, want 1", len(lines))
+	}
+	if !strings.Contains(lines[0], model.ID) {
+		t.Fatalf("warning = %q, want model id", lines[0])
 	}
 }
 

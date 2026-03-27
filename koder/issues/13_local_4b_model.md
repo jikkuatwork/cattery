@@ -1,6 +1,6 @@
 # 13 — Local LLM via ONNX
 
-## Status: open (research complete, ready for planning)
+## Status: done
 ## Priority: P1
 
 Run a local LLM via ONNX Runtime, same stack as TTS/STT. No external APIs needed.

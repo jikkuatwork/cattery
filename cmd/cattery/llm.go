@@ -71,6 +71,7 @@ func cmdLLM(args []string) error {
 	if model.Location != registry.Local {
 		return fmt.Errorf("remote LLM model %q is not supported yet", model.ID)
 	}
+	preflight.WarnLowLLMMemory(os.Stderr, model)
 
 	dataDir := paths.DataDir()
 	res, err := download.Ensure(dataDir, model)

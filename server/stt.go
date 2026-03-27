@@ -38,7 +38,7 @@ func (s *Server) handleSTT(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	eng, err := s.sttPool.Borrow(r.Context(), s.queue, &s.queued)
+	eng, err := s.borrowSTT(r.Context())
 	if err != nil {
 		if errors.Is(err, ErrQueueFull) {
 			w.Header().Set("Retry-After", "2")
