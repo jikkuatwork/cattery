@@ -5,6 +5,7 @@
 //	cattery "Hello, world."
 //	cattery tts --voice 4 "Hello!"
 //	cattery stt audio.wav
+//	cattery llm "What is the capital of France?"
 //	cattery status
 //	cattery download
 package main
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jikkuatwork/cattery/download"
+	"github.com/jikkuatwork/cattery/llm/qwen"
 	"github.com/jikkuatwork/cattery/ort"
 	"github.com/jikkuatwork/cattery/paths"
 	"github.com/jikkuatwork/cattery/phonemize"
@@ -49,6 +51,8 @@ func run() error {
 		return cmdTTS(args[1:])
 	case "stt":
 		return cmdSTT(args[1:])
+	case "llm":
+		return cmdLLM(args[1:])
 	case "keys":
 		return cmdKeys(args[1:])
 	case "serve":
@@ -537,6 +541,7 @@ Usage:
   cattery "Hello, world."          Shortcut for cattery tts
   cattery tts "Hello, world."      Text to speech
   cattery stt audio.wav            Speech to text
+  cattery llm "Hello"              Local text generation
   cattery serve                    Start REST API server
   cattery status                   Show model/runtime status
   cattery download                 Pre-download local assets
@@ -545,6 +550,7 @@ Usage:
 Commands:
   tts         Text to speech
   stt         Speech to text
+  llm         Local text generation
   serve       Start REST API server
   status      Show system status and downloaded artefacts
   download    Pre-download local models and runtime
@@ -559,6 +565,11 @@ TTS:
 
 STT:
   --output, -o     Output text file (default: stdout)
+
+LLM:
+  cattery llm "What is the capital of France?"
+  cattery llm --system "You are helpful" "Hi"
+  cattery llm --stdin < prompt.txt
 
 Server:
   cattery serve --port 8080
@@ -579,15 +590,18 @@ Usage:
   cattery tts --voice 4 "Hi there"
   cattery tts --model 1 "Hi there"
   cattery stt call.wav
+  cattery llm "What is the capital of France?"
+  cattery llm --stdin < prompt.txt
   cattery stt -
 
 Commands:
   tts         Text to speech
   stt         Speech to text
+  llm         Local text generation
   serve       Start REST API server
   status      Show system status and downloaded artefacts
   download    Pre-download local models and runtime
-  list        List TTS/STT models and voices
+  list        List TTS/STT/LLM models and voices
   keys        Manage API keys for --auth server mode
   help        Show this help
 
@@ -607,10 +621,18 @@ STT flags:
   --lang LANG      Language hint
   --model REF      STT model index or ID (default: 1)
 
+LLM flags:
+  --system TEXT    System prompt
+  --stdin          Read prompt from stdin
+  --model REF      LLM model index or ID (default: 1)
+  --max-tokens N   Maximum output tokens
+
 Manage:
   cattery list
   cattery list tts
+  cattery list llm
   cattery download stt
+  cattery download llm
   cattery status tts --model 1
 
 Pipes:
@@ -766,7 +788,7 @@ func parseKind(ref string) (registry.Kind, error) {
 	if kind, ok := parseKindAlias(ref); ok {
 		return kind, nil
 	}
-	return "", fmt.Errorf("unknown kind %q (want: tts, stt, runtime)", ref)
+	return "", fmt.Errorf("unknown kind %q (want: tts, stt, llm, runtime)", ref)
 }
 
 func parseKindAlias(ref string) (registry.Kind, bool) {
@@ -775,6 +797,8 @@ func parseKindAlias(ref string) (registry.Kind, bool) {
 		return registry.KindTTS, true
 	case "stt":
 		return registry.KindSTT, true
+	case "llm":
+		return registry.KindLLM, true
 	case "runtime", "ort":
 		return registry.KindRuntime, true
 	default:
@@ -846,7 +870,7 @@ func resolveModel(kind registry.Kind, ref string, localOnly bool) (*registry.Mod
 		}
 		if len(matches) > 1 {
 			return nil, fmt.Errorf(
-				"model index %d is ambiguous; use tts/stt or --kind",
+				"model index %d is ambiguous; use tts/stt/llm or --kind",
 				modelIndex,
 			)
 		}
@@ -958,6 +982,8 @@ func kindTitle(kind registry.Kind) string {
 		return "TTS"
 	case registry.KindSTT:
 		return "STT"
+	case registry.KindLLM:
+		return "LLM"
 	case registry.KindRuntime:
 		return "Runtime"
 	default:
@@ -966,11 +992,11 @@ func kindTitle(kind registry.Kind) string {
 }
 
 func displayCommandNames() []string {
-	return []string{"tts", "stt", "serve", "status", "download", "help"}
+	return []string{"tts", "stt", "llm", "serve", "status", "download", "help"}
 }
 
 func knownCommandNames() []string {
-	return []string{"tts", "stt", "serve", "keys", "list", "status", "download", "help", "version"}
+	return []string{"tts", "stt", "llm", "serve", "keys", "list", "status", "download", "help", "version"}
 }
 
 func resolveServeModelIndex(kind registry.Kind, ref string) (int, error) {
@@ -998,10 +1024,23 @@ func modelAllowed(model *registry.Model, localOnly bool) bool {
 
 func modelKindAddressable(kind registry.Kind) bool {
 	switch kind {
-	case registry.KindTTS, registry.KindSTT:
+	case registry.KindTTS, registry.KindSTT, registry.KindLLM:
 		return true
 	default:
 		return false
+	}
+}
+
+func newLLMEngine(model *registry.Model, dataDir string) (*qwen.Engine, error) {
+	if model == nil {
+		return nil, fmt.Errorf("missing LLM model")
+	}
+
+	switch model.ID {
+	case "qwen3.5-4b-v1.0":
+		return qwen.New(paths.ModelDir(dataDir, model.ID), model)
+	default:
+		return nil, fmt.Errorf("LLM model %q is not supported yet", model.ID)
 	}
 }
 
