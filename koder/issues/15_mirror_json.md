@@ -1,6 +1,6 @@
 # 15 — Artefact Mirror Registry (mirror.json)
 
-## Status: open (idea)
+## Status: done
 ## Priority: P2
 
 ## Summary

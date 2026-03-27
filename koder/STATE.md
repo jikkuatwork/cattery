@@ -94,7 +94,7 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [12](issues/12_llm_proxy.md) | LLM proxy (Ollama/OpenRouter) | open | P2 |
 | [13](issues/13_local_4b_model.md) | Local LLM via ONNX | open (research done, spike plan 36) | P1 |
 | [14](issues/14_web_ui.md) | Embedded web UI | open | P3 |
-| [15](issues/15_mirror_json.md) | Artefact mirror registry (mirror.json) | open | P2 |
+| [15](issues/15_mirror_json.md) | Artefact mirror registry (mirror.json) | **done** | P2 |
 | [16](issues/16_extract_ort_runtime.md) | Extract shared ORT runtime from engine/ | **done** | P0 |
 | [17](issues/17_tts_engine_interface.md) | TTS engine interface + package restructure | **done** | P0 |
 | [18](issues/18_registry_redesign.md) | Registry redesign for multi-modal artefacts | **done** | P1 |
@@ -114,8 +114,9 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 
 ## What's Next
 
-**#13 research complete** — Qwen3.5-4B int4 selected as default local LLM. Spike plan 36 written.
-Engine swapping (pool eviction + malloc_trim) enables 4B on Pi4 4GB by loading one modality at a time.
+**#15 done** — mirror.json shipped. All artefacts (TTS + STT) now self-hosted in `cattery-artefacts` with no HuggingFace dependency. Download paths restructured under `~/.cattery/artefacts/` to match repo layout. Default mirror selection ready for S3/R2 when needed.
+
+**#13 up next** — Qwen3.5-4B int4 selected as default local LLM. Spike plan 36 written. LLM artefacts will go into `cattery-artefacts` via the same mirror.json pattern.
 
 ### Open
 
@@ -130,7 +131,9 @@ Engine swapping (pool eviction + malloc_trim) enables 4B on Pi4 4GB by loading o
 
 - **No pure Go ONNX**: GoMLX/gonnx lack FFT/ISTFT ops. ORT via dlopen is the only path.
 - **Download on first run**: binary stays ~8MB, while ORT/model/voice artefacts are fetched as needed. `espeak-ng` stays external.
-- **Separate artefacts repo**: `cattery-artefacts` holds binaries via Git LFS. No auth.
+- **Separate artefacts repo**: `cattery-artefacts` holds binaries via Git LFS. No auth. All models (TTS + STT) self-hosted — no HuggingFace dependency.
+- **Artefacts path = repo layout**: model cache lives at `~/.cattery/artefacts/models/`, matching the `cattery-artefacts` repo tree. `git clone cattery-artefacts ~/.cattery/artefacts` gives instant offline — no downloads needed.
+- **mirror.json**: `cattery-artefacts/mirror.json` lists every artefact with size, SHA256, and ordered mirror URLs. Downloaded once per process; graceful fallback if unavailable. Mirrors support a `"default": true` flag to prefer S3/R2 over GitHub without changing array order. Adding a mirror is a one-line JSON edit, no code release.
 - **ORT from Microsoft**: not mirrored — their GitHub Release URLs are permanent. Currently on v1.24.4. Linux amd64 asset uses `x64` (not `x86_64`) in filename; macOS ships arm64-only since ORT 1.20+; arch mapping is per-OS in `download/download.go`.
 - **`scripts/install.sh`**: builds `./cmd/cattery` and drops it into `$HOME/.local/bin` (overrideable via `INSTALL_DIR`). Run after every local build.
 - **espeak-ng via os/exec**: simplest phonemizer. WASM embed deferred.
