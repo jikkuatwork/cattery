@@ -322,6 +322,16 @@ func mirrorSources(entry *MirrorEntry) []MirrorSource {
 
 func downloadSources(url string, mirrors []MirrorSource) []MirrorSource {
 	if len(mirrors) > 0 {
+		// If any mirror is marked default, put it first.
+		for i, m := range mirrors {
+			if m.Default && i != 0 {
+				reordered := make([]MirrorSource, 0, len(mirrors))
+				reordered = append(reordered, m)
+				reordered = append(reordered, mirrors[:i]...)
+				reordered = append(reordered, mirrors[i+1:]...)
+				return reordered
+			}
+		}
 		return mirrors
 	}
 	if url == "" {

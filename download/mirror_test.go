@@ -55,3 +55,34 @@ func TestParseMirrorIndexLookup(t *testing.T) {
 		t.Fatalf("unexpected lookup hit: %#v", got)
 	}
 }
+
+func TestDownloadSourcesDefaultReorder(t *testing.T) {
+	mirrors := []MirrorSource{
+		{URL: "https://github.com/model.onnx", Label: "github"},
+		{URL: "https://s3.example.com/model.onnx", Label: "s3", Default: true},
+		{URL: "https://backup.example.com/model.onnx", Label: "backup"},
+	}
+
+	got := downloadSources("", mirrors)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 sources, got %d", len(got))
+	}
+	if got[0].Label != "s3" {
+		t.Fatalf("expected default mirror first, got %q", got[0].Label)
+	}
+	if got[1].Label != "github" || got[2].Label != "backup" {
+		t.Fatalf("unexpected order: %q, %q", got[1].Label, got[2].Label)
+	}
+}
+
+func TestDownloadSourcesNoDefault(t *testing.T) {
+	mirrors := []MirrorSource{
+		{URL: "https://github.com/model.onnx", Label: "github"},
+		{URL: "https://s3.example.com/model.onnx", Label: "s3"},
+	}
+
+	got := downloadSources("", mirrors)
+	if got[0].Label != "github" {
+		t.Fatalf("expected original order preserved, got %q first", got[0].Label)
+	}
+}

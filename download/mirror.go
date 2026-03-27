@@ -23,8 +23,9 @@ type MirrorEntry struct {
 }
 
 type MirrorSource struct {
-	URL   string `json:"url"`
-	Label string `json:"label"`
+	URL     string `json:"url"`
+	Label   string `json:"label"`
+	Default bool   `json:"default,omitempty"`
 }
 
 func fetchMirrorIndex() (*MirrorIndex, error) {
