@@ -184,6 +184,11 @@ func (p *Pool[T]) Shutdown() {
 	}
 }
 
+// EvictIdle closes all currently idle engines without affecting borrowed ones.
+func (p *Pool[T]) EvictIdle() {
+	p.evictIdle()
+}
+
 func (p *Pool[T]) acquireSlot(
 	ctx context.Context,
 	queue chan struct{},

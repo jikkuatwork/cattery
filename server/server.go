@@ -4,7 +4,8 @@
 //
 //	POST /v1/tts      — synthesize text, returns WAV audio
 //	POST /v1/stt      — transcribe audio, returns JSON
-//	GET  /v1/models   — list available TTS + STT models
+//	POST /v1/chat/completions — OpenAI-compatible chat completions
+//	GET  /v1/models   — list available TTS + STT + LLM models
 //	GET  /v1/voices   — list available TTS voices
 //	GET  /v1/status   — server health and pool stats
 package server
@@ -26,6 +27,7 @@ import (
 	"time"
 
 	"github.com/jikkuatwork/cattery/download"
+	"github.com/jikkuatwork/cattery/llm"
 	"github.com/jikkuatwork/cattery/ort"
 	"github.com/jikkuatwork/cattery/paths"
 	"github.com/jikkuatwork/cattery/phonemize"
@@ -48,6 +50,7 @@ type Config struct {
 	Auth        bool
 	TTSModel    int
 	STTModel    int
+	LLMModel    int
 	ChunkSize   time.Duration
 }
 
@@ -62,8 +65,10 @@ type Server struct {
 	authStore *KeyStore
 	ttsModel  *registry.Model
 	sttModel  *registry.Model
+	llmModel  *registry.Model
 	ttsPool   *Pool[tts.Engine]
 	sttPool   *Pool[stt.Engine]
+	llmPool   *Pool[llm.Engine]
 
 	charsMu   sync.Mutex
 	charsUsed int
@@ -158,10 +163,19 @@ type sttStatusResponse struct {
 	EnginesReady int    `json:"engines_ready"`
 }
 
+type llmStatusResponse struct {
+	Model        int    `json:"model"`
+	ModelID      string `json:"model_id"`
+	ModelName    string `json:"model_name"`
+	Workers      int    `json:"workers"`
+	EnginesReady int    `json:"engines_ready"`
+}
+
 type statusResponse struct {
 	Status    string            `json:"status"`
 	TTS       ttsStatusResponse `json:"tts"`
 	STT       sttStatusResponse `json:"stt"`
+	LLM       llmStatusResponse `json:"llm"`
 	Queued    int64             `json:"queued"`
 	Processed int64             `json:"processed"`
 	Failed    int64             `json:"failed"`
@@ -212,6 +226,13 @@ func New(cfg Config) (*Server, error) {
 		}
 		cfg.STTModel = model.Index
 	}
+	if cfg.LLMModel == 0 {
+		model := registry.Default(registry.KindLLM)
+		if model == nil {
+			return nil, fmt.Errorf("no LLM models registered")
+		}
+		cfg.LLMModel = model.Index
+	}
 	resolvedChunkSize, err := resolveServerChunkSizeFromEnv(cfg.ChunkSize, os.Stderr)
 	if err != nil {
 		return nil, err
@@ -232,6 +253,14 @@ func New(cfg Config) (*Server, error) {
 	}
 	if sttModel.Location != registry.Local {
 		return nil, fmt.Errorf("remote STT model %q is not supported yet", sttModel.ID)
+	}
+
+	llmModel := registry.GetByIndex(registry.KindLLM, cfg.LLMModel)
+	if llmModel == nil {
+		return nil, fmt.Errorf("unknown LLM model %d", cfg.LLMModel)
+	}
+	if llmModel.Location != registry.Local {
+		return nil, fmt.Errorf("remote LLM model %q is not supported yet", llmModel.ID)
 	}
 
 	if !phonemize.Available() {
@@ -267,10 +296,17 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("download STT model: %w", err)
 	}
+	llmResult, err := download.Ensure(dataDir, llmModel)
+	if err != nil {
+		return nil, fmt.Errorf("download LLM model: %w", err)
+	}
 
 	ortLib := strings.TrimSpace(ttsResult.ORTLib)
 	if ortLib == "" {
 		ortLib = strings.TrimSpace(sttResult.ORTLib)
+	}
+	if ortLib == "" {
+		ortLib = strings.TrimSpace(llmResult.ORTLib)
 	}
 
 	s := &Server{
@@ -282,6 +318,7 @@ func New(cfg Config) (*Server, error) {
 		authStore: authStore,
 		ttsModel:  ttsModel,
 		sttModel:  sttModel,
+		llmModel:  llmModel,
 	}
 	if cfg.QueueMax > 0 {
 		s.queue = make(chan struct{}, cfg.QueueMax)
@@ -321,6 +358,23 @@ func New(cfg Config) (*Server, error) {
 		OnEmpty: s.onPoolsEmpty,
 	})
 
+	s.llmPool = NewPool(PoolConfig[llm.Engine]{
+		Name:        "llm",
+		Workers:     1,
+		IdleTimeout: cfg.IdleTimeout,
+		KeepAlive:   cfg.KeepAlive,
+		Create: func() (llm.Engine, error) {
+			if err := s.ensureORT(); err != nil {
+				return nil, err
+			}
+			return newLLMEngine(llmModel, dataDir)
+		},
+		Close: func(eng llm.Engine) error {
+			return eng.Close()
+		},
+		OnEmpty: s.onPoolsEmpty,
+	})
+
 	if cfg.KeepAlive {
 		if err := s.ensureORT(); err != nil {
 			return nil, fmt.Errorf("init ORT: %w", err)
@@ -333,6 +387,10 @@ func New(cfg Config) (*Server, error) {
 			s.Shutdown()
 			return nil, fmt.Errorf("pre-warm STT pool: %w", err)
 		}
+		if err := s.llmPool.Prewarm(); err != nil {
+			s.Shutdown()
+			return nil, fmt.Errorf("pre-warm LLM pool: %w", err)
+		}
 	}
 
 	protected := func(handler http.Handler) http.Handler {
@@ -344,6 +402,7 @@ func New(cfg Config) (*Server, error) {
 
 	s.mux.Handle("POST /v1/tts", protected(http.HandlerFunc(s.handleTTS)))
 	s.mux.Handle("POST /v1/stt", protected(http.HandlerFunc(s.handleSTT)))
+	s.mux.Handle("POST /v1/chat/completions", protected(http.HandlerFunc(s.handleChatCompletions)))
 	s.mux.Handle("GET /v1/models", protected(http.HandlerFunc(s.handleModels)))
 	s.mux.Handle("GET /v1/voices", protected(http.HandlerFunc(s.handleVoices)))
 	s.mux.HandleFunc("GET /v1/status", s.handleStatus)
@@ -386,6 +445,9 @@ func (s *Server) Shutdown() {
 	}
 	if s.sttPool != nil {
 		s.sttPool.Shutdown()
+	}
+	if s.llmPool != nil {
+		s.llmPool.Shutdown()
 	}
 	ort.Shutdown()
 }
@@ -486,8 +548,11 @@ func (s *Server) handleTTS(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	models := append(
-		append([]*registry.Model{}, registry.GetByKind(registry.KindTTS)...),
-		registry.GetByKind(registry.KindSTT)...,
+		append(
+			append([]*registry.Model{}, registry.GetByKind(registry.KindTTS)...),
+			registry.GetByKind(registry.KindSTT)...,
+		),
+		registry.GetByKind(registry.KindLLM)...,
 	)
 
 	resp := make([]modelResponse, 0, len(models))
@@ -560,6 +625,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	charsUsed := s.currentChars()
 	ttsStats := s.ttsPool.Stats()
 	sttStats := s.sttPool.Stats()
+	llmStats := s.llmPool.Stats()
 
 	writeJSON(w, http.StatusOK, statusResponse{
 		Status: "ok",
@@ -578,6 +644,13 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			ModelName:    s.sttModel.Name,
 			Workers:      sttStats.Workers,
 			EnginesReady: sttStats.EnginesReady,
+		},
+		LLM: llmStatusResponse{
+			Model:        s.llmModel.Index,
+			ModelID:      s.llmModel.ID,
+			ModelName:    s.llmModel.Name,
+			Workers:      llmStats.Workers,
+			EnginesReady: llmStats.EnginesReady,
 		},
 		Queued:    s.queued.Load(),
 		Processed: s.processed.Load(),
@@ -716,7 +789,20 @@ func (s *Server) onPoolsEmpty() {
 	if s.sttPool != nil && !s.sttPool.Empty() {
 		return
 	}
+	if s.llmPool != nil && !s.llmPool.Empty() {
+		return
+	}
 	ort.Shutdown()
+}
+
+func (s *Server) borrowLLM(ctx context.Context) (llm.Engine, error) {
+	if s.ttsPool != nil {
+		s.ttsPool.EvictIdle()
+	}
+	if s.sttPool != nil {
+		s.sttPool.EvictIdle()
+	}
+	return s.llmPool.Borrow(ctx, s.queue, &s.queued)
 }
 
 func (s *Server) reserveChars(n int) (used int, avail int, ok bool) {
