@@ -1,6 +1,7 @@
 models-data/
 *.wav
 /spike
+/spike-llm
 /stt-spike
 /cattery
 tmp/
