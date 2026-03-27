@@ -468,6 +468,43 @@ per-token stepping.
     But the exact state tensor set must be rediscovered from the 4B ONNX graph
     first.
 
+## 4B Graph Validation
+
+Verified March 28, 2026 via direct ONNX protobuf inspection (ORT
+`GetInputOutputInfo` requires the external data files to be present, so the
+graph was read with the Python `onnx` library from the `.onnx` file alone).
+
+**Result: 4B is hybrid, same architecture family as 0.8B.**
+
+- Embed input: `input_ids` `int64[-1,-1]`
+- Embed output: `inputs_embeds` `float32[-1,-1,2560]`
+- Decoder core inputs: `inputs_embeds`, `attention_mask`, `position_ids[3,-1,-1]`
+- Decoder state layout (32 layers total):
+  - `past_conv.N` `float32[-1,6144,4]` — layers 0,1,2,4,5,6,8,9,10,12,13,14,16,17,18,20,21,22,24,25,26,28,29,30 (24 layers)
+  - `past_recurrent.N` same layer set, `float32[-1,16,128,128]`
+  - `past_key_values.N.key/value` `float32[-1,4,-1,256]` — layers 3,7,11,15,19,23,27,31 (8 layers)
+- Decoder output: `logits` `float32[-1,-1,248320]` plus matching present tensors
+
+### Comparison with 0.8B
+
+| Property | 0.8B | 4B |
+|----------|------|-----|
+| Hidden size | 1024 | 2560 |
+| Total layers | 24 | 32 |
+| Conv/recurrent layers | 18 | 24 |
+| Full attention (KV) layers | 6 | 8 |
+| KV heads | 2 | 4 |
+| position_ids shape | [3,1,seq] | [3,1,seq] |
+| Architecture | Hybrid | Hybrid |
+
+**Implication**: The spike's three-family state handling (conv + recurrent +
+sparse KV) is required for both models. The decode loop generalizes directly —
+only layer counts and dimensions change. No architectural surprise.
+
+**ORT note**: `GetInputOutputInfo` on the 4B `.onnx` file without external data
+files produces a silent crash. Graph inspection requires either the full data
+files (~2.7 GiB) or a protobuf-level read of the `.onnx` file.
+
 ## Recommended Execution Order
 
 1. Spike 1 first, because it fixes the exact file inventory and hosting story.
