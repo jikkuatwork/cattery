@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/jikkuatwork/cattery/paths"
@@ -39,11 +40,17 @@ type Result struct {
 type pendingDownload struct {
 	label   string
 	url     string
+	mirrors []MirrorSource
 	dest    string
 	size    int64
 	sha256  string
 	isVoice bool
 }
+
+var (
+	mirrorIndexOnce sync.Once
+	mirrorIndex     *MirrorIndex
+)
 
 // Ensure checks if a model's required files exist, downloading what is missing.
 // Optional voices are downloaded too. Local models also ensure the shared ORT
@@ -56,12 +63,14 @@ func Ensure(dataDir string, model *registry.Model, voices ...*registry.Voice) (*
 		return nil, err
 	}
 
+	idx := getMirrorIndex()
+
 	result := &Result{
 		ORTLib: findOrtLib(paths.ORTLib(dataDir)),
 		Files:  make(map[string]string),
 	}
 
-	pending := pendingModelDownloads(result, dataDir, model, voices)
+	pending := pendingModelDownloads(result, dataDir, model, voices, idx)
 	needORT := needsORT(model) && result.ORTLib == ""
 
 	if !needORT && len(pending) == 0 {
@@ -112,7 +121,7 @@ func Ensure(dataDir string, model *registry.Model, voices ...*registry.Voice) (*
 	}
 
 	for _, item := range modelPending {
-		if err := downloadWithBar(style, item.label, item.url, item.dest, item.size, item.sha256); err != nil {
+		if err := downloadWithBar(style, item.label, item.url, item.mirrors, item.dest, item.size, item.sha256); err != nil {
 			return nil, fmt.Errorf("download %s: %w", item.label, err)
 		}
 	}
@@ -132,7 +141,7 @@ func EnsureAll(dataDir string, model *registry.Model) error {
 	return err
 }
 
-func pendingModelDownloads(result *Result, dataDir string, model *registry.Model, voices []*registry.Voice) []pendingDownload {
+func pendingModelDownloads(result *Result, dataDir string, model *registry.Model, voices []*registry.Voice, idx *MirrorIndex) []pendingDownload {
 	var pending []pendingDownload
 
 	for _, file := range model.Files {
@@ -141,12 +150,18 @@ func pendingModelDownloads(result *Result, dataDir string, model *registry.Model
 		if fileExists(dest) {
 			continue
 		}
+		entry := mirrorEntry(idx, model, file)
+		sha256 := file.SHA256
+		if sha256 == "" && entry != nil {
+			sha256 = entry.SHA256
+		}
 		pending = append(pending, pendingDownload{
-			label:  artefactLabel(model, file),
-			url:    artefactURL(model, file),
-			dest:   dest,
-			size:   file.SizeBytes,
-			sha256: file.SHA256,
+			label:   artefactLabel(model, file),
+			url:     artefactURL(model, file, idx),
+			mirrors: mirrorSources(entry),
+			dest:    dest,
+			size:    file.SizeBytes,
+			sha256:  sha256,
 		})
 	}
 
@@ -166,12 +181,18 @@ func pendingModelDownloads(result *Result, dataDir string, model *registry.Model
 		if fileExists(dest) {
 			continue
 		}
+		entry := mirrorEntry(idx, model, voice.File)
+		sha256 := voice.File.SHA256
+		if sha256 == "" && entry != nil {
+			sha256 = entry.SHA256
+		}
 		pending = append(pending, pendingDownload{
 			label:   voice.Name,
-			url:     artefactURL(model, voice.File),
+			url:     artefactURL(model, voice.File, idx),
+			mirrors: mirrorSources(entry),
 			dest:    dest,
 			size:    voice.File.SizeBytes,
-			sha256:  voice.File.SHA256,
+			sha256:  sha256,
 			isVoice: true,
 		})
 	}
@@ -216,62 +237,41 @@ func artefactLabel(model *registry.Model, file registry.Artefact) string {
 	}
 }
 
-func artefactURL(model *registry.Model, file registry.Artefact) string {
+func artefactURL(model *registry.Model, file registry.Artefact, idx *MirrorIndex) string {
 	if file.URL != "" {
 		return file.URL
+	}
+	if entry := mirrorEntry(idx, model, file); entry != nil && len(entry.Mirrors) > 0 {
+		return entry.Mirrors[0].URL
 	}
 	return fmt.Sprintf("%s/%s/%s", artefactsBaseURL, model.ID, filepath.ToSlash(file.Filename))
 }
 
 // downloadWithBar downloads a file showing a byte-tracking progress bar.
-func downloadWithBar(style *barStyle, label, url, destPath string, expectedSize int64, expectedSHA256 string) error {
+func downloadWithBar(style *barStyle, label, url string, mirrors []MirrorSource, destPath string, expectedSize int64, expectedSHA256 string) error {
+	return downloadArtefact(style, label, url, mirrors, destPath, expectedSize, expectedSHA256, true)
+}
+
+func downloadArtefact(style *barStyle, label, url string, mirrors []MirrorSource, destPath string, expectedSize int64, expectedSHA256 string, withBar bool) error {
 	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 		return err
 	}
 
-	resp, err := http.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("not found (404): %s", url)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
-	}
-
-	total := expectedSize
-	if total == 0 && resp.ContentLength > 0 {
-		total = resp.ContentLength
-	}
-
-	b := newBar(label, total, true, style)
-
-	tmpPath := destPath + ".tmp"
-	f, err := os.Create(tmpPath)
-	if err != nil {
-		return err
-	}
-
-	_, copyErr := io.Copy(io.MultiWriter(f, b), resp.Body)
-	f.Close()
-	b.finish()
-
-	if copyErr != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("download interrupted: %w", copyErr)
-	}
-
-	if expectedSHA256 != "" {
-		if err := verifyChecksum(tmpPath, expectedSHA256); err != nil {
-			os.Remove(tmpPath)
-			return err
+	var lastErr error
+	for _, source := range downloadSources(url, mirrors) {
+		if err := downloadFromSource(style, label, source, destPath, expectedSize, expectedSHA256, withBar); err != nil {
+			lastErr = err
+			continue
 		}
+		if source.Label != "" {
+			fmt.Fprintf(os.Stderr, "Using mirror %s for %s\n", source.Label, label)
+		}
+		return nil
 	}
-
-	return os.Rename(tmpPath, destPath)
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("no download source for %s", label)
 }
 
 // downloadVoicesBatch downloads all voices showing a single "Voices  3 / 27" counter bar.
@@ -279,7 +279,7 @@ func downloadVoicesBatch(style *barStyle, items []pendingDownload) error {
 	total := int64(len(items))
 	b := newBar("Voices", total, false, style)
 	for i, item := range items {
-		if err := downloadQuiet(item.url, item.dest, item.sha256); err != nil {
+		if err := downloadQuiet(item.label, item.url, item.mirrors, item.dest, item.sha256); err != nil {
 			b.finish()
 			return fmt.Errorf("download voice %s: %w", item.label, err)
 		}
@@ -290,32 +290,92 @@ func downloadVoicesBatch(style *barStyle, items []pendingDownload) error {
 }
 
 // downloadQuiet downloads a file without any progress display.
-func downloadQuiet(url, destPath, expectedSHA256 string) error {
-	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-		return err
-	}
+func downloadQuiet(label, url string, mirrors []MirrorSource, destPath, expectedSHA256 string) error {
+	return downloadArtefact(nil, label, url, mirrors, destPath, 0, expectedSHA256, false)
+}
 
-	resp, err := http.Get(url)
+func getMirrorIndex() *MirrorIndex {
+	mirrorIndexOnce.Do(func() {
+		idx, err := fetchMirrorIndex()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "mirror index unavailable: %v\n", err)
+			return
+		}
+		mirrorIndex = idx
+	})
+	return mirrorIndex
+}
+
+func mirrorEntry(idx *MirrorIndex, model *registry.Model, file registry.Artefact) *MirrorEntry {
+	if idx == nil || model == nil || file.URL != "" {
+		return nil
+	}
+	return idx.Lookup(model.ID, file.Filename)
+}
+
+func mirrorSources(entry *MirrorEntry) []MirrorSource {
+	if entry == nil || len(entry.Mirrors) == 0 {
+		return nil
+	}
+	return entry.Mirrors
+}
+
+func downloadSources(url string, mirrors []MirrorSource) []MirrorSource {
+	if len(mirrors) > 0 {
+		return mirrors
+	}
+	if url == "" {
+		return nil
+	}
+	return []MirrorSource{{URL: url}}
+}
+
+func downloadFromSource(style *barStyle, label string, source MirrorSource, destPath string, expectedSize int64, expectedSHA256 string, withBar bool) error {
+	resp, err := http.Get(source.URL)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("not found (404): %s", url)
+		return fmt.Errorf("not found (404): %s", source.URL)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
+		return fmt.Errorf("HTTP %d from %s", resp.StatusCode, source.URL)
+	}
+
+	total := expectedSize
+	if total == 0 && resp.ContentLength > 0 {
+		total = resp.ContentLength
+	}
+
+	var writer io.Writer
+	var b *bar
+	if withBar {
+		b = newBar(label, total, true, style)
+		writer = b
 	}
 
 	tmpPath := destPath + ".tmp"
 	f, err := os.Create(tmpPath)
 	if err != nil {
+		if b != nil {
+			b.finish()
+		}
 		return err
 	}
 
-	_, copyErr := io.Copy(f, resp.Body)
+	if writer == nil {
+		writer = f
+	} else {
+		writer = io.MultiWriter(f, writer)
+	}
+
+	_, copyErr := io.Copy(writer, resp.Body)
 	f.Close()
+	if b != nil {
+		b.finish()
+	}
 
 	if copyErr != nil {
 		os.Remove(tmpPath)
