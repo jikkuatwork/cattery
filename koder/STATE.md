@@ -92,7 +92,7 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [10](issues/10_server_api_audit.md) | Server API audit for apps | **done** (subsumed by #21) | P2 |
 | [11](issues/11_server_auth.md) | Optional server auth | **done** (plan 34) | P2 |
 | [12](issues/12_llm_proxy.md) | LLM proxy (Ollama/OpenRouter) | open | P2 |
-| [13](issues/13_local_4b_model.md) | Local 4B LLM via ONNX | open | P3 |
+| [13](issues/13_local_4b_model.md) | Local LLM via ONNX | open (research done, spike plan 36) | P1 |
 | [14](issues/14_web_ui.md) | Embedded web UI | open | P3 |
 | [15](issues/15_mirror_json.md) | Artefact mirror registry (mirror.json) | open | P2 |
 | [16](issues/16_extract_ort_runtime.md) | Extract shared ORT runtime from engine/ | **done** | P0 |
@@ -114,14 +114,14 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 
 ## What's Next
 
-**#30 + #31 done** (plan 35). Packages renamed `speak/` → `tts/`, `listen/` → `stt/`.
-CLI subcommands are `tts`/`stt`. Default help is minimal; `--advanced` reveals model selection,
-`list`, `keys`, server tuning. No legacy aliases — old `speak`/`listen` commands and `/v1/speak`/`/v1/listen` routes removed.
+**#13 research complete** — Qwen3.5-4B int4 selected as default local LLM. Spike plan 36 written.
+Engine swapping (pool eviction + malloc_trim) enables 4B on Pi4 4GB by loading one modality at a time.
 
 ### Open
 
+- **#13 Local LLM** — spike plan 36 ready: model availability, Go tokenizer, KV-cache decode loop (~3-4 days)
 - **#22 Bundle espeak-ng** — eliminate the only system dependency
-- **#12 LLM proxy** — unified AI backend (`cattery think`)
+- **#12 LLM proxy** — unified AI backend (`cattery think`); may merge with #13
 - **#07** License compliance follow-through
 - ~~**#23 OpenAI remote engines**~~ — deferred (pure local focus)
 - Vision: single-binary conversational system (STT → LLM → TTS) for indie builders on Pi4
@@ -177,6 +177,8 @@ CLI subcommands are `tts`/`stt`. Default help is minimal; `--advanced` reveals m
 - **Numeric indices everywhere**: models and voices addressed by stable per-kind numeric index in CLI (`--voice 4 --model 1`). Slugs exist but are never required input. API responses always include both index and slug. Indices are 1-based, stable, never reassigned.
 - **Server auth is opt-in**: `--auth` flag enables Bearer token auth with `~/.cattery/keys.json`. Off by default — zero overhead. Keys are `cat_`-prefixed, SHA-256 hashed at rest, managed via `cattery keys create/list/revoke/delete`. Per-key rate limiting (fixed-window, in-memory). `/v1/status` always public. Hot-reloads keys on file change.
 - **Pure local focus (2026-03)**: remote engine support (#23) deferred. Cattery stays local-only for now. Auth, rate limiting, and API design assume local inference.
+- **LLM model: Qwen3.5-4B int4**: selected March 2026 after evaluating Qwen3.5 (0.8B/2B/4B), Qwen3, Phi-4-mini, Llama 3.2, Gemma 3. Dense architecture, Apache 2.0, ~2.5-3GB RAM. ONNX export exists at `onnx-community/Qwen3.5-4B-ONNX` (~2.91 GiB text-only q4). Uses ONNX Runtime (not llama.cpp) to avoid second inference engine.
+- **LLM engine swapping**: Pi4 4GB target. Only one heavy engine loaded at a time — pool eviction + malloc_trim between STT → LLM → TTS phases. ~1.4s swap cost per transition. Estimated round-trip ~8-12s on Pi4.
 - **Repo-local Codex workflow**: `.codex/skills/open` and `.codex/skills/close` are tracked in-repo, not globally. `open` should read `koder/STATE.md` first after restarts; `close` should sync `koder/STATE.md`, validate changed local skills, and commit a coherent session when explicitly invoked.
 
 ## Research
