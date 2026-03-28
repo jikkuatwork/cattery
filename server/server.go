@@ -123,28 +123,6 @@ type audioSpeechRequest struct {
 	ResponseFormat string     `json:"response_format,omitempty"`
 }
 
-type modelResponse struct {
-	Index      int    `json:"index"`
-	ID         string `json:"id"`
-	Kind       string `json:"kind"`
-	Name       string `json:"name"`
-	Location   string `json:"location"`
-	Downloaded *bool  `json:"downloaded"`
-	SizeBytes  *int64 `json:"size_bytes,omitempty"`
-	Voices     *int   `json:"voices,omitempty"`
-}
-
-type voiceResponse struct {
-	Index       int    `json:"index"`
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Gender      string `json:"gender"`
-	Accent      string `json:"accent"`
-	Description string `json:"description"`
-	Model       int    `json:"model"`
-	ModelID     string `json:"model_id"`
-}
-
 type openAIModelListResponse struct {
 	Object string              `json:"object"`
 	Data   []openAIModelObject `json:"data"`
@@ -425,7 +403,6 @@ func New(cfg Config) (*Server, error) {
 	s.mux.Handle("POST /v1/audio/transcriptions", protected(http.HandlerFunc(s.handleAudioTranscriptions)))
 	s.mux.Handle("POST /v1/chat/completions", protected(http.HandlerFunc(s.handleChatCompletions)))
 	s.mux.Handle("GET /v1/models", protected(http.HandlerFunc(s.handleModels)))
-	s.mux.Handle("GET /v1/voices", protected(http.HandlerFunc(s.handleVoices)))
 	s.mux.HandleFunc("GET /v1/status", s.handleStatus)
 
 	s.mux.Handle("GET /debug/pprof/", protected(http.HandlerFunc(pprof.Index)))
@@ -567,70 +544,24 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		registry.GetByKind(registry.KindLLM)...,
 	)
 
-	resp := make([]modelResponse, 0, len(models))
+	resp := make([]openAIModelObject, 0, len(models))
 	for _, model := range models {
 		if model == nil {
 			continue
 		}
 
-		item := modelResponse{
-			Index:    model.Index,
-			ID:       model.ID,
-			Kind:     string(model.Kind),
-			Name:     model.Name,
-			Location: string(model.Location),
-		}
-
-		if model.Location == registry.Local {
-			downloaded := modelFilesDownloaded(s.dataDir, model)
-			item.Downloaded = &downloaded
-
-			sizeBytes := modelFilesSize(model)
-			item.SizeBytes = &sizeBytes
-		}
-
-		if model.Kind == registry.KindTTS {
-			voices := len(model.Voices)
-			item.Voices = &voices
-		}
-
-		resp = append(resp, item)
+		resp = append(resp, openAIModelObject{
+			ID:      model.ID,
+			Object:  "model",
+			Created: 0,
+			OwnedBy: "cattery",
+		})
 	}
 
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (s *Server) handleVoices(w http.ResponseWriter, r *http.Request) {
-	modelRef := strings.TrimSpace(r.URL.Query().Get("model"))
-	models := registry.GetByKind(registry.KindTTS)
-
-	if modelRef != "" {
-		model := registry.Resolve(registry.KindTTS, modelRef)
-		if model == nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown TTS model %q", modelRef))
-			return
-		}
-		models = []*registry.Model{model}
-	}
-
-	var resp []voiceResponse
-	for _, model := range models {
-		for i := range model.Voices {
-			voice := model.Voices[i]
-			resp = append(resp, voiceResponse{
-				Index:       i + 1,
-				ID:          voice.ID,
-				Name:        voice.Name,
-				Gender:      voice.Gender,
-				Accent:      voice.Accent,
-				Description: voice.Description,
-				Model:       model.Index,
-				ModelID:     model.ID,
-			})
-		}
-	}
-
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, openAIModelListResponse{
+		Object: "list",
+		Data:   resp,
+	})
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
