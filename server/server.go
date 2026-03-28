@@ -2,11 +2,10 @@
 //
 // Endpoints:
 //
-//	POST /v1/tts      — synthesize text, returns WAV audio
-//	POST /v1/stt      — transcribe audio, returns JSON
+//	POST /v1/audio/speech — synthesize text, returns WAV audio
+//	POST /v1/audio/transcriptions — transcribe audio, returns JSON
 //	POST /v1/chat/completions — OpenAI-compatible chat completions
 //	GET  /v1/models   — list available TTS + STT + LLM models
-//	GET  /v1/voices   — list available TTS voices
 //	GET  /v1/status   — server health and pool stats
 package server
 
@@ -116,13 +115,12 @@ func (r requestRef) String() string {
 	return strings.TrimSpace(r.Value)
 }
 
-type ttsRequest struct {
-	Text   string     `json:"text"`
-	Voice  requestRef `json:"voice,omitempty"`
-	Model  requestRef `json:"model,omitempty"`
-	Gender string     `json:"gender,omitempty"`
-	Speed  float64    `json:"speed,omitempty"`
-	Lang   string     `json:"lang,omitempty"`
+type audioSpeechRequest struct {
+	Input          string     `json:"input"`
+	Voice          requestRef `json:"voice,omitempty"`
+	Model          requestRef `json:"model,omitempty"`
+	Speed          float64    `json:"speed,omitempty"`
+	ResponseFormat string     `json:"response_format,omitempty"`
 }
 
 type modelResponse struct {
@@ -145,6 +143,18 @@ type voiceResponse struct {
 	Description string `json:"description"`
 	Model       int    `json:"model"`
 	ModelID     string `json:"model_id"`
+}
+
+type openAIModelListResponse struct {
+	Object string              `json:"object"`
+	Data   []openAIModelObject `json:"data"`
+}
+
+type openAIModelObject struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
 }
 
 type ttsStatusResponse struct {
@@ -186,6 +196,16 @@ type statusResponse struct {
 
 type errorResponse struct {
 	Error string `json:"error"`
+}
+
+type openAIErrorEnvelope struct {
+	Error openAIError `json:"error"`
+}
+
+type openAIError struct {
+	Message string `json:"message"`
+	Type    string `json:"type"`
+	Code    any    `json:"code"`
 }
 
 type synthMeta struct {
@@ -401,7 +421,7 @@ func New(cfg Config) (*Server, error) {
 		return AuthMiddleware(s.authStore)(handler)
 	}
 
-	s.mux.Handle("POST /v1/tts", protected(http.HandlerFunc(s.handleTTS)))
+	s.mux.Handle("POST /v1/audio/speech", protected(http.HandlerFunc(s.handleAudioSpeech)))
 	s.mux.Handle("POST /v1/stt", protected(http.HandlerFunc(s.handleSTT)))
 	s.mux.Handle("POST /v1/chat/completions", protected(http.HandlerFunc(s.handleChatCompletions)))
 	s.mux.Handle("GET /v1/models", protected(http.HandlerFunc(s.handleModels)))
@@ -453,48 +473,49 @@ func (s *Server) Shutdown() {
 	ort.Shutdown()
 }
 
-func (s *Server) handleTTS(w http.ResponseWriter, r *http.Request) {
-	var req ttsRequest
+func (s *Server) handleAudioSpeech(w http.ResponseWriter, r *http.Request) {
+	var req audioSpeechRequest
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		writeOpenAIError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
 
-	req.Text = strings.TrimSpace(req.Text)
-	if req.Text == "" {
-		writeError(w, http.StatusBadRequest, "text is required")
+	req.Input = strings.TrimSpace(req.Input)
+	if req.Input == "" {
+		writeOpenAIError(w, http.StatusBadRequest, "input is required")
 		return
 	}
 	if req.Speed == 0 {
 		req.Speed = 1.0
 	}
 	if req.Speed < 0.5 || req.Speed > 2.0 {
-		writeError(w, http.StatusBadRequest, "speed must be between 0.5 and 2.0")
+		writeOpenAIError(w, http.StatusBadRequest, "speed must be between 0.5 and 2.0")
 		return
 	}
-	if req.Lang == "" {
-		req.Lang = "en-us"
+	if format := strings.TrimSpace(req.ResponseFormat); format != "" && format != "wav" {
+		writeOpenAIError(w, http.StatusBadRequest, "unsupported response_format")
+		return
 	}
 
 	model, err := s.resolveTTSModel(req.Model.String())
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeOpenAIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	voice, voiceIndex, err := resolveTTSVoice(model, req.Voice.String(), req.Gender)
+	voice, _, err := resolveTTSVoice(model, req.Voice.String(), "")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeOpenAIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	textLen := len(req.Text)
+	textLen := len(req.Input)
 	used, avail, ok := s.reserveChars(textLen)
 	if !ok {
 		w.Header().Set("Retry-After", "3")
-		writeError(w, http.StatusServiceUnavailable,
+		writeOpenAIError(w, http.StatusServiceUnavailable,
 			fmt.Sprintf(
 				"character budget exhausted (%d/%d used, need %d, %d available)",
 				used,
@@ -510,7 +531,7 @@ func (s *Server) handleTTS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, ErrQueueFull) {
 			w.Header().Set("Retry-After", "2")
-			writeError(w, http.StatusServiceUnavailable,
+			writeOpenAIError(w, http.StatusServiceUnavailable,
 				fmt.Sprintf("queue full (%d max), try again shortly", s.cfg.QueueMax))
 			return
 		}
@@ -520,31 +541,21 @@ func (s *Server) handleTTS(w http.ResponseWriter, r *http.Request) {
 		s.failed.Add(1)
 		if preflight.IsMemoryError(err) {
 			w.Header().Set("Retry-After", "30")
-			writeError(w, http.StatusServiceUnavailable, err.Error())
+			writeOpenAIError(w, http.StatusServiceUnavailable, err.Error())
 			return
 		}
 		log.Printf("tts error: %v", err)
-		writeError(w, http.StatusInternalServerError, "synthesis failed")
+		writeOpenAIError(w, http.StatusInternalServerError, "synthesis failed")
 		return
 	}
 
 	s.processed.Add(1)
 
-	filename := fmt.Sprintf("output-%d.wav", time.Now().Unix())
 	w.Header().Set("Content-Type", "audio/wav")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", wavBuf.Len()))
-	w.Header().Set("X-Model", strconv.Itoa(model.Index))
-	w.Header().Set("X-Model-ID", model.ID)
-	w.Header().Set("X-Model-Name", model.Name)
-	w.Header().Set("X-Voice", strconv.Itoa(voiceIndex))
-	w.Header().Set("X-Voice-ID", voice.ID)
-	w.Header().Set("X-Voice-Name", voice.Name)
-	w.Header().Set("X-Audio-Duration", fmt.Sprintf("%.2fs", meta.duration))
-	w.Header().Set("X-Processing-Time", fmt.Sprintf("%.2fs", meta.elapsed))
-	w.Header().Set("X-RTF", fmt.Sprintf("%.2f", meta.rtf))
 	w.WriteHeader(http.StatusOK)
 	w.Write(wavBuf.Bytes())
+	_ = meta
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
@@ -731,32 +742,32 @@ func voiceIndex(model *registry.Model, voiceID string) int {
 
 func (s *Server) synthesize(
 	ctx context.Context,
-	req ttsRequest,
+	req audioSpeechRequest,
 	model *registry.Model,
 	voice tts.Voice,
-) (*bytes.Buffer, *synthMeta, error) {
+) (*bytes.Buffer, synthMeta, error) {
 	eng, err := s.borrowTTS(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, synthMeta{}, err
 	}
 	defer s.ttsPool.Return(eng)
 
 	t0 := time.Now()
 	var buf bytes.Buffer
 	err = preflight.GuardMemoryError("speech synthesis", func() error {
-		return eng.Speak(&buf, req.Text, tts.Options{
+		return eng.Speak(&buf, req.Input, tts.Options{
 			Voice:     voice.ID,
-			Gender:    req.Gender,
+			Gender:    "",
 			Speed:     req.Speed,
-			Lang:      req.Lang,
+			Lang:      "en-us",
 			ChunkSize: s.cfg.ChunkSize,
 		})
 	})
 	if err != nil {
 		if preflight.IsMemoryError(err) {
-			return nil, nil, err
+			return nil, synthMeta{}, err
 		}
-		return nil, nil, fmt.Errorf("synthesize: %w", err)
+		return nil, synthMeta{}, fmt.Errorf("synthesize: %w", err)
 	}
 
 	elapsed := time.Since(t0).Seconds()
@@ -766,7 +777,7 @@ func (s *Server) synthesize(
 		rtf = elapsed / duration
 	}
 
-	return &buf, &synthMeta{
+	return &buf, synthMeta{
 		duration: duration,
 		elapsed:  elapsed,
 		rtf:      rtf,
@@ -894,4 +905,14 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, errorResponse{Error: msg})
+}
+
+func writeOpenAIError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, openAIErrorEnvelope{
+		Error: openAIError{
+			Message: msg,
+			Type:    "invalid_request_error",
+			Code:    nil,
+		},
+	})
 }
