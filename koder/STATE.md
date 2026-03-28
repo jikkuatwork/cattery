@@ -116,15 +116,14 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [29](issues/29_fix_memtest.md) | Fix memtest suite: test artifacts causing false failures and OOM risk | **done** | P1 |
 | [30](issues/30_rename_verbs.md) | Rename speak/listen → tts/stt | **done** (plan 35) | P2 |
 | [31](issues/31_simplified_ux.md) | Simplified default UX with --advanced escape hatch | **done** (plan 35) | P2 |
-| [32](issues/32_openai_compat_api.md) | OpenAI-compatible server API | open | P1 |
+| [32](issues/32_openai_compat_api.md) | OpenAI-compatible server API | **done** (plan 32) | P1 |
 
 ## What's Next
 
-**#13 done** — Local LLM shipped. Qwen3.5 via ONNX Runtime in pure Go. `cattery llm "prompt"` works end-to-end. Server exposes OpenAI-compatible `POST /v1/chat/completions` with SSE streaming. Bidirectional engine swapping (STT↔LLM↔TTS) with explicit eviction for Pi4 4GB target. Hybrid architecture (conv + recurrent + sparse KV) handled data-driven from graph metadata. LLM model artefacts now self-hosted in `cattery-artefacts` (no HuggingFace dependency).
+**#32 done** — Server API is now OpenAI-compatible. `POST /v1/audio/speech` (TTS), `POST /v1/audio/transcriptions` (STT multipart), `GET /v1/models` (OpenAI list envelope). Old custom routes (`/v1/tts`, `/v1/stt`, `/v1/voices`) removed. Nested OpenAI error format on new handlers. OpenAI Python/Node SDK works as drop-in client. Note: `llm.go` and auth middleware still use flat error format — follow-up if full SDK error compat needed.
 
 ### Open
 
-- **#32 OpenAI-compatible server API** — replace custom TTS/STT endpoints with OpenAI-format (`/v1/audio/speech`, `/v1/audio/transcriptions`); LLM endpoint already matches. Goal: OpenAI SDK drop-in.
 - **#22 Bundle espeak-ng** — eliminate the only system dependency
 - **#12 LLM proxy** — unified AI backend (`cattery think`); may merge with #13's server endpoint
 - **#07** License compliance follow-through (now includes Qwen3.5 Apache-2.0)

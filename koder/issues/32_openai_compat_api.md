@@ -1,6 +1,6 @@
 # #32 — OpenAI-Compatible Server API
 
-## Status: open | Pri: P1
+## Status: done | Pri: P1
 
 ## Goal
 
