@@ -203,3 +203,26 @@ func TestKeyStoreHotReload(t *testing.T) {
 		t.Fatalf("new key status = %d, want %d", recNew.Code, http.StatusNoContent)
 	}
 }
+
+func TestAuthMiddlewareProtectsAudioSpeechRoute(t *testing.T) {
+	handler := AuthMiddleware(NewKeyStore(filepath.Join(t.TempDir(), keysFilename)))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/audio/speech", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+
+	var resp errorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Unmarshal(error body): %v", err)
+	}
+	if resp.Error != "authorization required" {
+		t.Fatalf("error = %q, want %q", resp.Error, "authorization required")
+	}
+}
