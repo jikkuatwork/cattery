@@ -422,7 +422,7 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	s.mux.Handle("POST /v1/audio/speech", protected(http.HandlerFunc(s.handleAudioSpeech)))
-	s.mux.Handle("POST /v1/stt", protected(http.HandlerFunc(s.handleSTT)))
+	s.mux.Handle("POST /v1/audio/transcriptions", protected(http.HandlerFunc(s.handleAudioTranscriptions)))
 	s.mux.Handle("POST /v1/chat/completions", protected(http.HandlerFunc(s.handleChatCompletions)))
 	s.mux.Handle("GET /v1/models", protected(http.HandlerFunc(s.handleModels)))
 	s.mux.Handle("GET /v1/voices", protected(http.HandlerFunc(s.handleVoices)))

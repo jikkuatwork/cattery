@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"mime"
+	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -15,26 +15,28 @@ import (
 	"github.com/jikkuatwork/cattery/stt/moonshine"
 )
 
-type sttResponse struct {
-	Text           string  `json:"text"`
-	Duration       float64 `json:"duration"`
-	ProcessingTime float64 `json:"processing_time"`
-	RTF            float64 `json:"rtf"`
-	Model          int     `json:"model"`
-	ModelID        string  `json:"model_id"`
-	ModelName      string  `json:"model_name"`
+type audioTranscriptionForm struct {
+	File           multipart.File
+	Filename       string
+	Model          string
+	Language       string
+	ResponseFormat string
 }
 
-func (s *Server) handleSTT(w http.ResponseWriter, r *http.Request) {
-	model, err := s.resolveSTTModel(r.URL.Query().Get("model"))
+type audioTranscriptionJSONResponse struct {
+	Text string `json:"text"`
+}
+
+func (s *Server) handleAudioTranscriptions(w http.ResponseWriter, r *http.Request) {
+	form, err := parseAudioTranscriptionForm(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeOpenAIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	defer form.File.Close()
 
-	contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
-	if err := validateSTTContentType(contentType); err != nil {
-		writeError(w, http.StatusUnsupportedMediaType, err.Error())
+	if _, err := s.resolveSTTModel(form.Model); err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -42,7 +44,7 @@ func (s *Server) handleSTT(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, ErrQueueFull) {
 			w.Header().Set("Retry-After", "2")
-			writeError(w, http.StatusServiceUnavailable,
+			writeOpenAIError(w, http.StatusServiceUnavailable,
 				fmt.Sprintf("queue full (%d max), try again shortly", s.cfg.QueueMax))
 			return
 		}
@@ -50,7 +52,7 @@ func (s *Server) handleSTT(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.failed.Add(1)
-		writeError(w, http.StatusInternalServerError, "transcription failed")
+		writeOpenAIError(w, http.StatusInternalServerError, "transcription failed")
 		return
 	}
 	defer s.sttPool.Return(eng)
@@ -58,8 +60,8 @@ func (s *Server) handleSTT(w http.ResponseWriter, r *http.Request) {
 	var result *stt.Result
 	err = preflight.GuardMemoryError("transcription", func() error {
 		var innerErr error
-		result, innerErr = eng.Transcribe(r.Body, stt.Options{
-			Lang:      strings.TrimSpace(r.URL.Query().Get("lang")),
+		result, innerErr = eng.Transcribe(form.File, stt.Options{
+			Lang:      form.Language,
 			ChunkSize: s.cfg.ChunkSize,
 		})
 		return innerErr
@@ -68,23 +70,53 @@ func (s *Server) handleSTT(w http.ResponseWriter, r *http.Request) {
 		s.failed.Add(1)
 		if preflight.IsMemoryError(err) {
 			w.Header().Set("Retry-After", "30")
-			writeError(w, http.StatusServiceUnavailable, err.Error())
+			writeOpenAIError(w, http.StatusServiceUnavailable, err.Error())
 			return
 		}
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeOpenAIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	s.processed.Add(1)
-	writeJSON(w, http.StatusOK, sttResponse{
-		Text:           result.Text,
-		Duration:       result.Duration,
-		ProcessingTime: result.Elapsed,
-		RTF:            result.RTF,
-		Model:          model.Index,
-		ModelID:        model.ID,
-		ModelName:      model.Name,
-	})
+	writeAudioTranscriptionResponse(w, result.Text, form.ResponseFormat)
+}
+
+func parseAudioTranscriptionForm(r *http.Request) (audioTranscriptionForm, error) {
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		return audioTranscriptionForm{}, fmt.Errorf("multipart/form-data request is required")
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		return audioTranscriptionForm{}, fmt.Errorf("file is required")
+	}
+
+	responseFormat := strings.TrimSpace(r.FormValue("response_format"))
+	switch responseFormat {
+	case "", "json", "text":
+	default:
+		file.Close()
+		return audioTranscriptionForm{}, fmt.Errorf("unsupported response_format")
+	}
+
+	return audioTranscriptionForm{
+		File:           file,
+		Filename:       header.Filename,
+		Model:          strings.TrimSpace(r.FormValue("model")),
+		Language:       strings.TrimSpace(r.FormValue("language")),
+		ResponseFormat: responseFormat,
+	}, nil
+}
+
+func writeAudioTranscriptionResponse(w http.ResponseWriter, text string, format string) {
+	if format == "text" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(text))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, audioTranscriptionJSONResponse{Text: text})
 }
 
 func (s *Server) resolveSTTModel(ref string) (*registry.Model, error) {
@@ -101,23 +133,5 @@ func newSTTEngine(model *registry.Model, dataDir string) (stt.Engine, error) {
 		return moonshine.New(paths.ModelDir(dataDir, model.ID), model.Meta)
 	default:
 		return nil, fmt.Errorf("STT model %q is not supported yet", model.ID)
-	}
-}
-
-func validateSTTContentType(contentType string) error {
-	if contentType == "" {
-		return nil
-	}
-
-	mediaType, _, err := mime.ParseMediaType(contentType)
-	if err != nil {
-		return fmt.Errorf("invalid Content-Type %q", contentType)
-	}
-
-	switch mediaType {
-	case "audio/wav", "application/octet-stream":
-		return nil
-	default:
-		return fmt.Errorf("unsupported Content-Type %q", mediaType)
 	}
 }
