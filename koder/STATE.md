@@ -63,7 +63,7 @@ cattery help --advanced          # full flag/command reference
 |---|---|---|
 | TTS model + voices | `jikkuatwork/cattery-artefacts` (Git LFS) | 88MB + 13MB |
 | STT model | `jikkuatwork/cattery-artefacts` (Git LFS) | 28MB |
-| LLM model (Qwen3.5-4B q4) | HuggingFace `onnx-community/Qwen3.5-4B-ONNX` | ~2.91 GiB |
+| LLM model (Qwen3.5-4B q4) | `jikkuatwork/cattery-artefacts` (Git LFS) | ~2.91 GiB |
 | ORT runtime | Microsoft GitHub Releases | 18MB |
 
 Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.cattery/`; `espeak-ng` is not bundled.
@@ -116,13 +116,15 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [29](issues/29_fix_memtest.md) | Fix memtest suite: test artifacts causing false failures and OOM risk | **done** | P1 |
 | [30](issues/30_rename_verbs.md) | Rename speak/listen → tts/stt | **done** (plan 35) | P2 |
 | [31](issues/31_simplified_ux.md) | Simplified default UX with --advanced escape hatch | **done** (plan 35) | P2 |
+| [32](issues/32_openai_compat_api.md) | OpenAI-compatible server API | open | P1 |
 
 ## What's Next
 
-**#13 done** — Local LLM shipped. Qwen3.5 via ONNX Runtime in pure Go. `cattery llm "prompt"` works end-to-end. Server exposes OpenAI-compatible `POST /v1/chat/completions` with SSE streaming. Bidirectional engine swapping (STT↔LLM↔TTS) with explicit eviction for Pi4 4GB target. Hybrid architecture (conv + recurrent + sparse KV) handled data-driven from graph metadata.
+**#13 done** — Local LLM shipped. Qwen3.5 via ONNX Runtime in pure Go. `cattery llm "prompt"` works end-to-end. Server exposes OpenAI-compatible `POST /v1/chat/completions` with SSE streaming. Bidirectional engine swapping (STT↔LLM↔TTS) with explicit eviction for Pi4 4GB target. Hybrid architecture (conv + recurrent + sparse KV) handled data-driven from graph metadata. LLM model artefacts now self-hosted in `cattery-artefacts` (no HuggingFace dependency).
 
 ### Open
 
+- **#32 OpenAI-compatible server API** — replace custom TTS/STT endpoints with OpenAI-format (`/v1/audio/speech`, `/v1/audio/transcriptions`); LLM endpoint already matches. Goal: OpenAI SDK drop-in.
 - **#22 Bundle espeak-ng** — eliminate the only system dependency
 - **#12 LLM proxy** — unified AI backend (`cattery think`); may merge with #13's server endpoint
 - **#07** License compliance follow-through (now includes Qwen3.5 Apache-2.0)

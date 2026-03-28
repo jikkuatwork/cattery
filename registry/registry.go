@@ -172,52 +172,52 @@ var models = []*Model{
 			{
 				Filename:  "onnx/decoder_model_merged_q4.onnx",
 				SizeBytes: 1_206_737,
-				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/onnx/decoder_model_merged_q4.onnx",
+				URL:       "https://github.com/jikkuatwork/cattery-artefacts/raw/main/models/qwen3.5-4b-v1.0/onnx/decoder_model_merged_q4.onnx",
 			},
 			{
 				Filename:  "onnx/decoder_model_merged_q4.onnx_data",
 				SizeBytes: 2_093_368_320,
-				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/onnx/decoder_model_merged_q4.onnx_data",
+				URL:       "https://github.com/jikkuatwork/cattery-artefacts/raw/main/models/qwen3.5-4b-v1.0/onnx/decoder_model_merged_q4.onnx_data",
 			},
 			{
 				Filename:  "onnx/decoder_model_merged_q4.onnx_data_1",
 				SizeBytes: 607_298_560,
-				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/onnx/decoder_model_merged_q4.onnx_data_1",
+				URL:       "https://github.com/jikkuatwork/cattery-artefacts/raw/main/models/qwen3.5-4b-v1.0/onnx/decoder_model_merged_q4.onnx_data_1",
 			},
 			{
 				Filename:  "onnx/embed_tokens_q4.onnx",
 				SizeBytes: 857,
-				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/onnx/embed_tokens_q4.onnx",
+				URL:       "https://github.com/jikkuatwork/cattery-artefacts/raw/main/models/qwen3.5-4b-v1.0/onnx/embed_tokens_q4.onnx",
 			},
 			{
 				Filename:  "onnx/embed_tokens_q4.onnx_data",
 				SizeBytes: 407_244_800,
-				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/onnx/embed_tokens_q4.onnx_data",
+				URL:       "https://github.com/jikkuatwork/cattery-artefacts/raw/main/models/qwen3.5-4b-v1.0/onnx/embed_tokens_q4.onnx_data",
 			},
 			{
 				Filename:  "tokenizer.json",
 				SizeBytes: 19_226_111,
-				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/tokenizer.json",
+				URL:       "https://github.com/jikkuatwork/cattery-artefacts/raw/main/models/qwen3.5-4b-v1.0/tokenizer.json",
 			},
 			{
 				Filename:  "config.json",
 				SizeBytes: 3_198,
-				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/config.json",
+				URL:       "https://github.com/jikkuatwork/cattery-artefacts/raw/main/models/qwen3.5-4b-v1.0/config.json",
 			},
 			{
 				Filename:  "generation_config.json",
 				SizeBytes: 248,
-				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/generation_config.json",
+				URL:       "https://github.com/jikkuatwork/cattery-artefacts/raw/main/models/qwen3.5-4b-v1.0/generation_config.json",
 			},
 			{
 				Filename:  "tokenizer_config.json",
 				SizeBytes: 9_162,
-				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/tokenizer_config.json",
+				URL:       "https://github.com/jikkuatwork/cattery-artefacts/raw/main/models/qwen3.5-4b-v1.0/tokenizer_config.json",
 			},
 			{
 				Filename:  "chat_template.jinja",
 				SizeBytes: 7_756,
-				URL:       "https://huggingface.co/onnx-community/Qwen3.5-4B-ONNX/resolve/main/chat_template.jinja",
+				URL:       "https://github.com/jikkuatwork/cattery-artefacts/raw/main/models/qwen3.5-4b-v1.0/chat_template.jinja",
 			},
 		},
 		Meta: map[string]string{
