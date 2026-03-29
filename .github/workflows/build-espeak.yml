@@ -1,0 +1,156 @@
+name: Build espeak-ng bundles
+
+on:
+  workflow_dispatch:
+    inputs:
+      espeak_version:
+        description: "espeak-ng upstream tag"
+        required: true
+        default: "1.51"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            artifact: linux_amd64
+          - os: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            artifact: linux_arm64
+          - os: macos-13
+            goos: darwin
+            goarch: amd64
+            artifact: darwin_amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            artifact: darwin_arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Install Linux build deps
+        if: matrix.goos == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake make gcc musl-tools
+
+      - name: Install macOS build deps
+        if: matrix.goos == 'darwin'
+        run: brew install cmake
+
+      - name: Clone espeak-ng
+        run: |
+          git clone --depth 1 --branch ${{ inputs.espeak_version }} \
+            https://github.com/espeak-ng/espeak-ng.git espeak-src
+
+      - name: Build espeak-ng (Linux static)
+        if: matrix.goos == 'linux'
+        run: |
+          cd espeak-src
+          mkdir build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DUSE_ASYNC=OFF \
+            -DUSE_MBROLA=OFF \
+            -DUSE_LIBSONIC=OFF \
+            -DUSE_LIBPCAUDIO=OFF \
+            -DUSE_KLATT=OFF \
+            -DUSE_SPEECHPLAYER=OFF \
+            -DCMAKE_C_COMPILER=musl-gcc \
+            -DCMAKE_C_FLAGS="-static"
+          make -j$(nproc)
+
+      - name: Build espeak-ng (macOS)
+        if: matrix.goos == 'darwin'
+        run: |
+          cd espeak-src
+          mkdir build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DUSE_ASYNC=OFF \
+            -DUSE_MBROLA=OFF \
+            -DUSE_LIBSONIC=OFF \
+            -DUSE_LIBPCAUDIO=OFF \
+            -DUSE_KLATT=OFF \
+            -DUSE_SPEECHPLAYER=OFF
+          make -j$(sysctl -n hw.ncpu)
+
+      - name: Package binary
+        run: |
+          mkdir -p pkg/bin
+          cp espeak-src/build/src/espeak-ng pkg/bin/
+          chmod 755 pkg/bin/espeak-ng
+          cd pkg && tar czf /tmp/${{ matrix.artifact }}.tar.gz bin/
+
+      - name: Package data (once, on linux/amd64)
+        if: matrix.artifact == 'linux_amd64'
+        run: |
+          mkdir -p pkg-data/data
+          cp -r espeak-src/espeak-ng-data/* pkg-data/data/
+          cd pkg-data && tar czf /tmp/data.tar.gz data/
+
+      - name: Upload binary archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: /tmp/${{ matrix.artifact }}.tar.gz
+
+      - name: Upload data archive
+        if: matrix.artifact == 'linux_amd64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: espeak-data
+          path: /tmp/data.tar.gz
+
+  commit:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Stage bundles
+        run: |
+          mkdir -p phonemize/bundle
+          cp artifacts/linux_amd64/linux_amd64.tar.gz phonemize/bundle/
+          cp artifacts/linux_arm64/linux_arm64.tar.gz phonemize/bundle/
+          cp artifacts/darwin_amd64/darwin_amd64.tar.gz phonemize/bundle/
+          cp artifacts/darwin_arm64/darwin_arm64.tar.gz phonemize/bundle/
+          cp artifacts/espeak-data/data.tar.gz phonemize/bundle/
+
+          echo "## SHA-256 sums" > /tmp/pr-body.md
+          echo '```' >> /tmp/pr-body.md
+          cd phonemize/bundle && sha256sum *.tar.gz >> /tmp/pr-body.md
+          echo '```' >> /tmp/pr-body.md
+
+      - name: Create PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="chore/espeak-bundle-${{ inputs.espeak_version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add phonemize/bundle/
+          git commit -m "chore: add espeak-ng ${{ inputs.espeak_version }} bundles for go:embed"
+          git push origin "$BRANCH"
+          gh pr create \
+            --title "Add espeak-ng ${{ inputs.espeak_version }} bundles" \
+            --body-file /tmp/pr-body.md \
+            --base main

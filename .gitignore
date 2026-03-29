@@ -6,3 +6,4 @@ models-data/
 /cattery
 tmp/
 .codex/settings.local.json
+.env

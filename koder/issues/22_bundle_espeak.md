@@ -2,8 +2,8 @@
 
 ## Status: open
 ## Priority: P1
-## Depends on: nothing (can parallel with #16-#21)
-## Blocks: nothing (but critical for single-command install story)
+## Depends on: nothing
+## Blocks: nothing (but critical for single-binary install story)
 
 ## Problem
 
@@ -14,131 +14,173 @@ go install github.com/jikkuatwork/cattery/cmd/cattery@latest
 cattery "Hello"  # fails: espeak-ng not found
 ```
 
-On Pi4 / embedded systems, requiring apt access adds friction and may need sudo.
+On Pi4 / embedded / air-gapped systems, requiring apt access adds friction, may need sudo, and breaks offline operation.
 
 ## Goal
 
-Eliminate the espeak-ng system dependency. After `go install`, the first `cattery` invocation should download everything it needs — including espeak-ng binary + data files — with zero system packages required.
+Eliminate the espeak-ng system dependency by embedding espeak-ng binary + data inside the cattery Go binary via `go:embed`. After `go install`, the first `cattery` invocation works with zero network and zero system packages.
 
-## Options considered
+Key constraint: **air-gapped durability**. Once cattery is installed, it must never need the internet again. No download-on-first-run. No URLs to rot. The binary is self-contained forever.
 
-| Approach | Binary size | Complexity | Deps |
-|---|---|---|---|
-| **A: Download binary + data** | +0 (download) | Low | None |
-| B: Static link via cgo | +2MB | High | Build-time C toolchain |
-| C: WASM embed | +2MB | Very high | wazero runtime |
+## Decision: embed via `go:embed` (not download-on-first-run)
 
-**Option A wins.** Same download-on-first-run pattern as ORT and models. Consistent UX. Zero cgo additions.
+### Why not download-on-first-run?
+
+The download approach (original design) has real fragility for a project targeting long-term durability:
+
+- GitHub LFS has bandwidth quotas — can get throttled
+- Repos get renamed, deleted, or transferred
+- CDN/mirror URLs change over time
+- Any breakage = cattery stops working on fresh installs
+- Air-gapped setups break if `~/.cattery/` is wiped (new SD card, new user)
+
+### Why `go:embed`?
+
+- Binary is self-contained — works on first run, no network required
+- No URL rot — the version you compile is the version that works forever
+- Size cost is ~3MB (compressed espeak-ng binary + data) — total binary goes from ~8MB to ~11MB
+- Same pre-build work as the download approach (build espeak-ng for 4 platforms)
+- Simpler code — no download logic, no mirror fallback, no checksum verification for espeak-ng
+
+### Legal basis
+
+**espeak-ng binary** (LGPL-2.1+): distributing unmodified binary is permitted. Requires attribution and source pointer in `THIRD_PARTY_NOTICES.md`.
+
+**espeak-ng-data** (GPL-3.0): embedded as an opaque compressed archive, extracted to disk, consumed by a separate process (`os/exec`). This is **mere aggregation** under GPL Section 5 — no relicensing required. Same legal basis as Linux distros shipping GPL and non-GPL software on the same image.
+
+To keep the aggregation argument airtight:
+- espeak-ng binary + data live in a compressed archive blob, not as loose Go source
+- Extracted to `~/.cattery/espeak-ng/`, executed via `os/exec` (separate process)
+- cattery code never imports or links espeak-ng C code
+- `THIRD_PARTY_NOTICES.md` includes full LGPL/GPL attribution + source pointer to espeak-ng repo
 
 ## Design
 
-### What to download
+### Pre-build espeak-ng static binaries
 
-espeak-ng consists of:
-1. **Binary**: `espeak-ng` executable (~300KB, platform-specific)
-2. **Data directory**: phoneme rules, language data (~2MB, platform-independent)
-
-Both are small enough to bundle in the artefacts repo alongside models.
-
-### Artefact layout
-
-```
-~/.cattery/
-├── ort/                    # ORT shared library (existing)
-├── kokoro-82m-v1.0/        # TTS model + voices (existing)
-├── moonshine-tiny-v1.0/    # STT model (new, from #20)
-└── espeak-ng/              # NEW
-    ├── bin/
-    │   └── espeak-ng       # platform-specific binary
-    └── data/
-        └── ...             # espeak-ng-data (phoneme rules, languages)
-```
-
-### Build espeak-ng binaries
-
-Pre-build espeak-ng static binaries for supported platforms:
+Build static espeak-ng binaries for supported platforms:
 - `linux/amd64`
 - `linux/arm64` (Pi4)
 - `darwin/amd64`
 - `darwin/arm64`
 
-Host them in `cattery-artefacts` repo (same as ORT/models). The download system already handles platform-specific artefacts for ORT — extend it for espeak-ng.
+Built via `cmake -DBUILD_SHARED_LIBS=OFF` + musl on Linux for truly static binaries. macOS uses system toolchain.
 
-### espeak-ng data files
+### Embed layout
 
-The data directory (`espeak-ng-data/`) contains:
-- `phontab`, `phonindex`, `phondata` — phoneme definitions
-- `en_dict`, `en_rules` — English language data
-- Other language files as needed
+```
+phonemize/
+├── embed_linux_amd64.go    # //go:build linux && amd64
+├── embed_linux_arm64.go    # //go:build linux && arm64
+├── embed_darwin_amd64.go   # //go:build darwin && amd64
+├── embed_darwin_arm64.go   # //go:build darwin && arm64
+└── bundle/
+    ├── linux_amd64.tar.gz  # espeak-ng binary (static, ~300KB compressed)
+    ├── linux_arm64.tar.gz
+    ├── darwin_amd64.tar.gz
+    ├── darwin_arm64.tar.gz
+    └── data.tar.gz         # espeak-ng-data (platform-independent, ~2MB compressed)
+```
 
-These are architecture-independent. One download for all platforms.
+Each `embed_<platform>.go` file:
+```go
+//go:build linux && amd64
+
+package phonemize
+
+import _ "embed"
+
+//go:embed bundle/linux_amd64.tar.gz
+var espeakBinArchive []byte
+
+//go:embed bundle/data.tar.gz
+var espeakDataArchive []byte
+```
+
+### Runtime extraction
+
+On first use, extract to `~/.cattery/espeak-ng/`:
+
+```
+~/.cattery/espeak-ng/
+├── bin/
+│   └── espeak-ng           # platform-specific binary (chmod +x)
+└── data/
+    └── ...                 # espeak-ng-data (phoneme rules, languages)
+```
+
+Extraction is cached — skip if `~/.cattery/espeak-ng/bin/espeak-ng` already exists and matches expected version. A version marker file (`~/.cattery/espeak-ng/.version`) tracks which cattery version extracted the files, so upgrades can re-extract if the bundled espeak-ng changes.
 
 ### Changes to `phonemize/`
 
-Currently `phonemize/` calls `espeak-ng` via `os/exec` and relies on the system PATH:
+Currently calls system espeak-ng via PATH:
 
 ```go
-func (p *EspeakPhonemizer) Phonemize(text string) (string, error) {
-    cmd := exec.Command("espeak-ng", ...)
-    // ...
-}
+cmd := exec.Command("espeak-ng", ...)
 ```
 
 After this change:
-1. Check `~/.cattery/espeak-ng/bin/espeak-ng` first
-2. Fall back to system `espeak-ng` if present
-3. If neither found, trigger download
-4. Set `ESPEAK_DATA_PATH` env var when using bundled binary
 
 ```go
-func (p *EspeakPhonemizer) espeakBin() string {
+func (p *EspeakPhonemizer) espeakBin() (string, error) {
     bundled := filepath.Join(paths.DataDir(), "espeak-ng", "bin", "espeak-ng")
     if _, err := os.Stat(bundled); err == nil {
-        return bundled
+        return bundled, nil
     }
-    if path, err := exec.LookPath("espeak-ng"); err == nil {
-        return path
+    // Extract from embedded archive
+    if err := extractEspeak(); err != nil {
+        return "", fmt.Errorf("extract bundled espeak-ng: %w", err)
     }
-    return "" // needs download
+    return bundled, nil
 }
 ```
 
-### Download integration
+When using the bundled binary, set `ESPEAK_DATA_PATH`:
 
-Add espeak-ng to the registry as a `KindRuntime` artefact (or a new `KindTool` kind). The `download.Ensure()` flow for TTS should include espeak-ng alongside ORT.
-
-### `cattery download` behavior
-
-```
-cattery download          # downloads everything including espeak-ng
-cattery "Hello"           # auto-downloads espeak-ng if missing
+```go
+cmd := exec.Command(bin, "-q", "--ipa=3", "--sep= ", "-v", lang, text)
+cmd.Env = append(os.Environ(),
+    "ESPEAK_DATA_PATH="+filepath.Join(paths.DataDir(), "espeak-ng", "data"),
+)
 ```
 
-### Platform detection
-
-Same pattern as ORT download — detect `runtime.GOOS` + `runtime.GOARCH`, select the right binary archive.
+System espeak-ng is **not** used as fallback — the bundled version is always preferred to ensure consistent IPA output across all installations.
 
 ### File changes
 
-- **Edit**: `phonemize/phonemize.go` — look for bundled binary, set ESPEAK_DATA_PATH
-- **Edit**: `registry/registry.go` — add espeak-ng artefact entries
-- **Edit**: `download/download.go` — ensure espeak-ng alongside ORT
-- **Edit**: `preflight/preflight.go` — update espeak-ng check for bundled binary
-- **Add to artefacts repo**: pre-built espeak-ng binaries + data
+- **Add**: `phonemize/embed_<platform>.go` (4 files) — build-tagged embed directives
+- **Add**: `phonemize/bundle/` — pre-built compressed archives
+- **Add**: `phonemize/extract.go` — extraction + caching logic
+- **Edit**: `phonemize/phonemize.go` — use bundled binary, set ESPEAK_DATA_PATH
+- **Edit**: `preflight/preflight.go` — remove "espeak-ng not found" system check (it's always available now)
+- **Edit**: `THIRD_PARTY_NOTICES.md` — add LGPL/GPL attribution + source pointer
+
+### Build process
+
+A `scripts/build-espeak.sh` script:
+1. Clones espeak-ng at a pinned tag (e.g., `1.51`)
+2. Cross-compiles static binaries for 4 platforms
+3. Packages each as `<platform>.tar.gz`
+4. Packages `espeak-ng-data/` as `data.tar.gz`
+5. Drops archives into `phonemize/bundle/`
+
+This runs **once** when updating the bundled espeak-ng version, not on every build. The archives are checked into the repo (they're small — ~3MB total).
 
 ## Acceptance criteria
 
-- [ ] Fresh install: `go install ... && cattery "Hello"` works without `apt install`
-- [ ] espeak-ng binary + data auto-downloaded on first use
-- [ ] Bundled espeak-ng used when present, system espeak-ng as fallback
+- [ ] `go install ... && cattery "Hello"` works without `apt install` on all 4 platforms
+- [ ] No network required — works on air-gapped systems from first run
+- [ ] espeak-ng binary + data extracted to `~/.cattery/espeak-ng/` on first use, cached thereafter
+- [ ] Version marker enables clean re-extraction on cattery upgrades
 - [ ] `ESPEAK_DATA_PATH` correctly set for bundled binary
-- [ ] Works on linux/amd64, linux/arm64, darwin/amd64, darwin/arm64
-- [ ] `cattery status` shows espeak-ng source (bundled vs system)
-- [ ] `cattery download` includes espeak-ng
+- [ ] `cattery status` shows bundled espeak-ng version
+- [ ] `THIRD_PARTY_NOTICES.md` updated with LGPL-2.1+/GPL-3.0 attribution and source pointer
+- [ ] `scripts/build-espeak.sh` reproducibly builds static binaries for 4 platforms
+- [ ] Binary size increase is under 4MB
 
 ## Notes
 
-- espeak-ng is LGPL-2.1+. We're distributing the unmodified binary — this is fine under LGPL. Document in THIRD_PARTY_NOTICES.md.
-- The data files are GPL-3.0 (espeak-ng-data). Need to verify distribution obligations. May need to include source pointer.
-- Building static espeak-ng binaries: `cmake -DBUILD_SHARED_LIBS=OFF` + musl on Linux for truly static binaries.
-- This could be done incrementally: first support bundled binary if manually placed, then add auto-download.
+- espeak-ng-data is ~2MB uncompressed, compresses well. Binary is ~300KB per platform.
+- Total embedded payload: ~3MB compressed across all platforms (only the matching platform's binary is included per build via build tags; data is shared).
+- The `go:embed` approach means `go install` from source includes espeak-ng — no separate download step, no artefacts repo dependency for this component.
+- Future: if espeak-ng is ever replaced (e.g., WASM+wazero for cleaner embedding), the extraction cache in `~/.cattery/espeak-ng/` can be cleaned up by the new version.
