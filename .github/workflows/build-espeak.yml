@@ -34,27 +34,24 @@ jobs:
         if: matrix.goos == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake make gcc g++ musl-tools
-          # musl needs linux headers for linux/limits.h
-          sudo ln -sf /usr/include/linux /usr/include/$(uname -m)-linux-musl/linux
-          sudo ln -sf /usr/include/asm-generic /usr/include/$(uname -m)-linux-musl/asm-generic
-          sudo ln -sf /usr/include/$(uname -m)-linux-gnu/asm /usr/include/$(uname -m)-linux-musl/asm
+          sudo apt-get install -y cmake make gcc
 
       - name: Clone espeak-ng
         run: |
           git clone --depth 1 --branch ${{ inputs.espeak_ref }} \
             https://github.com/espeak-ng/espeak-ng.git espeak-src
 
-      - name: Build espeak-ng (Linux static via musl)
+      - name: Build espeak-ng (Linux static)
         if: matrix.goos == 'linux'
         run: |
           cd espeak-src
-          CC=musl-gcc cmake -Bbuild \
+          cmake -Bbuild \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
             -DUSE_LIBPCAUDIO=OFF \
             -DUSE_ASYNC=OFF \
-            -DCMAKE_C_FLAGS="-static" \
+            -DUSE_KLATT=OFF \
+            -DUSE_SPEECHPLAYER=OFF \
             -DCMAKE_EXE_LINKER_FLAGS="-static"
           cmake --build build -j$(nproc)
 
