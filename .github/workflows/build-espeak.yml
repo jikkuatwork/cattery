@@ -35,6 +35,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake make gcc g++ musl-tools
+          # musl needs linux headers for linux/limits.h
+          sudo ln -sf /usr/include/linux /usr/include/$(uname -m)-linux-musl/linux
+          sudo ln -sf /usr/include/asm-generic /usr/include/$(uname -m)-linux-musl/asm-generic
+          sudo ln -sf /usr/include/$(uname -m)-linux-gnu/asm /usr/include/$(uname -m)-linux-musl/asm
 
       - name: Clone espeak-ng
         run: |
