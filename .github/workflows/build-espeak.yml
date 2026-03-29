@@ -11,6 +11,7 @@ on:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -21,13 +22,15 @@ jobs:
             goos: linux
             goarch: arm64
             artifact: linux_arm64
-          - os: macos-13
+          - os: macos-latest
             goos: darwin
             goarch: amd64
+            arch_flag: -arch x86_64
             artifact: darwin_amd64
           - os: macos-latest
             goos: darwin
             goarch: arm64
+            arch_flag: -arch arm64
             artifact: darwin_arm64
 
     runs-on: ${{ matrix.os }}
@@ -41,7 +44,7 @@ jobs:
 
       - name: Install macOS build deps
         if: matrix.goos == 'darwin'
-        run: brew install cmake
+        run: brew list cmake &>/dev/null || brew install cmake
 
       - name: Clone espeak-ng
         run: |
@@ -79,7 +82,8 @@ jobs:
             -DUSE_LIBSONIC=OFF \
             -DUSE_LIBPCAUDIO=OFF \
             -DUSE_KLATT=OFF \
-            -DUSE_SPEECHPLAYER=OFF
+            -DUSE_SPEECHPLAYER=OFF \
+            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.goarch == 'amd64' && 'x86_64' || 'arm64' }}"
           make -j$(sysctl -n hw.ncpu)
 
       - name: Package binary
