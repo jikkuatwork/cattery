@@ -3,10 +3,10 @@ name: Build espeak-ng bundles
 on:
   workflow_dispatch:
     inputs:
-      espeak_version:
-        description: "espeak-ng upstream tag"
+      espeak_ref:
+        description: "espeak-ng git ref (tag, branch, or commit)"
         required: true
-        default: "1.51"
+        default: "master"
 
 jobs:
   build:
@@ -24,13 +24,7 @@ jobs:
             artifact: linux_arm64
           - os: macos-latest
             goos: darwin
-            goarch: amd64
-            arch_flag: -arch x86_64
-            artifact: darwin_amd64
-          - os: macos-latest
-            goos: darwin
             goarch: arm64
-            arch_flag: -arch arm64
             artifact: darwin_arm64
 
     runs-on: ${{ matrix.os }}
@@ -40,51 +34,41 @@ jobs:
         if: matrix.goos == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake make gcc musl-tools
-
-      - name: Install macOS build deps
-        if: matrix.goos == 'darwin'
-        run: brew list cmake &>/dev/null || brew install cmake
+          sudo apt-get install -y cmake make gcc g++ musl-tools
 
       - name: Clone espeak-ng
         run: |
-          git clone --depth 1 --branch ${{ inputs.espeak_version }} \
+          git clone --depth 1 --branch ${{ inputs.espeak_ref }} \
             https://github.com/espeak-ng/espeak-ng.git espeak-src
 
-      - name: Build espeak-ng (Linux static)
+      - name: Build espeak-ng (Linux static via musl)
         if: matrix.goos == 'linux'
         run: |
           cd espeak-src
-          mkdir build && cd build
-          cmake .. \
+          CC=musl-gcc cmake -Bbuild \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
-            -DUSE_ASYNC=OFF \
-            -DUSE_MBROLA=OFF \
-            -DUSE_LIBSONIC=OFF \
             -DUSE_LIBPCAUDIO=OFF \
-            -DUSE_KLATT=OFF \
-            -DUSE_SPEECHPLAYER=OFF \
-            -DCMAKE_C_COMPILER=musl-gcc \
-            -DCMAKE_C_FLAGS="-static"
-          make -j$(nproc)
+            -DUSE_ASYNC=OFF \
+            -DCMAKE_C_FLAGS="-static" \
+            -DCMAKE_EXE_LINKER_FLAGS="-static"
+          cmake --build build -j$(nproc)
 
       - name: Build espeak-ng (macOS)
         if: matrix.goos == 'darwin'
         run: |
           cd espeak-src
-          mkdir build && cd build
-          cmake .. \
+          cmake -Bbuild \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
-            -DUSE_ASYNC=OFF \
-            -DUSE_MBROLA=OFF \
-            -DUSE_LIBSONIC=OFF \
             -DUSE_LIBPCAUDIO=OFF \
-            -DUSE_KLATT=OFF \
-            -DUSE_SPEECHPLAYER=OFF \
-            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.goarch == 'amd64' && 'x86_64' || 'arm64' }}"
-          make -j$(sysctl -n hw.ncpu)
+            -DUSE_ASYNC=OFF
+          cmake --build build -j$(sysctl -n hw.ncpu)
+
+      - name: Build data
+        run: |
+          cd espeak-src
+          cmake --build build --target data
 
       - name: Package binary
         run: |
@@ -96,8 +80,8 @@ jobs:
       - name: Package data (once, on linux/amd64)
         if: matrix.artifact == 'linux_amd64'
         run: |
-          mkdir -p pkg-data/data
-          cp -r espeak-src/espeak-ng-data/* pkg-data/data/
+          mkdir -p pkg-data
+          cp -r espeak-src/build/espeak-ng-data pkg-data/data
           cd pkg-data && tar czf /tmp/data.tar.gz data/
 
       - name: Upload binary archive
@@ -134,7 +118,6 @@ jobs:
           mkdir -p phonemize/bundle
           cp artifacts/linux_amd64/linux_amd64.tar.gz phonemize/bundle/
           cp artifacts/linux_arm64/linux_arm64.tar.gz phonemize/bundle/
-          cp artifacts/darwin_amd64/darwin_amd64.tar.gz phonemize/bundle/
           cp artifacts/darwin_arm64/darwin_arm64.tar.gz phonemize/bundle/
           cp artifacts/espeak-data/data.tar.gz phonemize/bundle/
 
@@ -147,14 +130,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BRANCH="chore/espeak-bundle-${{ inputs.espeak_version }}"
+          BRANCH="chore/espeak-bundle-$(date +%Y%m%d)"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
           git add phonemize/bundle/
-          git commit -m "chore: add espeak-ng ${{ inputs.espeak_version }} bundles for go:embed"
+          git commit -m "chore: add espeak-ng bundles for go:embed"
           git push origin "$BRANCH"
           gh pr create \
-            --title "Add espeak-ng ${{ inputs.espeak_version }} bundles" \
+            --title "Add espeak-ng bundles" \
             --body-file /tmp/pr-body.md \
             --base main
