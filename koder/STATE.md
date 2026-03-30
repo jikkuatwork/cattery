@@ -106,7 +106,7 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [19](issues/19_cli_redesign.md) | CLI redesign: subcommand-per-modality | **done** | P1 |
 | [20](issues/20_stt_package.md) | STT package: Moonshine-tiny | **done** | P1 |
 | [21](issues/21_server_api_redesign.md) | Server API redesign for multi-modality | **done** | P2 |
-| [22](issues/22_bundle_espeak.md) | Bundle espeak-ng (zero system deps) | **in progress** (binaries built, go:embed next) | P1 |
+| [22](issues/22_bundle_espeak.md) | Bundle espeak-ng (zero system deps) | **in progress** (artefacts moved, download logic next) | P1 |
 | [23](issues/23_openai_remote_engines.md) | OpenAI-compatible remote engines | open | P2 |
 | [24](issues/24_tts_sentence_chunking.md) | Transparent sentence chunking for long text TTS | **done** | P1 |
 | [25](issues/25_text_normalizer.md) | Pure Go text normalizer for TTS preprocessing | **done** | P1 |
@@ -118,19 +118,19 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [31](issues/31_simplified_ux.md) | Simplified default UX with --advanced escape hatch | **done** (plan 35) | P2 |
 | [32](issues/32_openai_compat_api.md) | OpenAI-compatible server API | **done** (plan 32) | P1 |
 | [33](issues/33_gh_actions_pr_permission.md) | Enable GH Actions PR creation permission | open | P3 |
-| [34](issues/34_trim_espeak_data.md) | Trim espeak-ng-data to English-only | open | P3 |
+| [34](issues/34_trim_espeak_data.md) | Trim espeak-ng-data to English-only | **dropped** | P3 |
 
 ## What's Next
 
-**#22 in progress** — espeak-ng binaries built via GH Actions workflow (`build-espeak.yml`, manual trigger) and merged into `phonemize/bundle/`. 3 platforms: linux/amd64, linux/arm64, darwin/arm64. Data archive is 9.2MB (all 117 languages). Next step: implement `go:embed` + extraction logic in `phonemize/` per plan 22.
+**#22 in progress** — espeak-ng binaries (3 platforms) + data (9.2MB, all 117 languages) moved from `phonemize/bundle/` to `cattery-artefacts/espeak-ng-v1.51/`. Registered in `mirror.json`. Old `go:embed` approach dropped — espeak is now download-on-first-run like ORT and models. `phonemize/bundle/` purged from git history. Next step: implement download + extraction logic in `phonemize/` (replace embed with `download/` calls).
 
 ### Open
 
-- **#22 Bundle espeak-ng** — binaries in repo, `go:embed` implementation remains (plan 22)
+- **#22 Bundle espeak-ng** — artefacts in `cattery-artefacts`, need download + extraction logic in `phonemize/`
 - **#12 LLM proxy** — unified AI backend (`cattery think`); may merge with #13's server endpoint
 - **#07** License compliance follow-through (now includes Qwen3.5 Apache-2.0)
-- **#34** Trim espeak-ng-data to English-only (9.2MB → ~500KB, P3)
 - **#33** Enable GH Actions PR permission (one-time repo setting, P3)
+- ~~**#34** Trim espeak-ng-data to English-only~~ — dropped; keeping all 117 languages
 - ~~**#23 OpenAI remote engines**~~ — deferred (pure local focus)
 - Vision: single-binary conversational system (STT → LLM → TTS) for indie builders on Pi4 — now architecturally complete
 
@@ -181,7 +181,7 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
   still chunks by token budget in this pass.
 - **Multi-modal package naming**: packages = modality abbreviations = API paths. `tts/` (text-to-speech), `stt/` (speech-to-text), future `llm/` (language model). Each has an `Engine` interface + per-model subdirectories (e.g. `tts/kokoro/`, `stt/moonshine/`). Default CLI/help shows one model per modality; `--advanced` reveals multi-model plumbing.
 - **Pi4 viability confirmed**: TTS+STT hot = ~250MB RAM, 2-4s round-trip for voice message bot. Comfortable on Pi4 4GB.
-- **espeak-ng bundled via `go:embed`**: pre-built static espeak-ng binaries + data are checked into `phonemize/bundle/` and embedded into the Go binary at compile time. Extracted to `~/.cattery/espeak-ng/` on first use, cached thereafter. No download-on-first-run — air-gap safe from first invocation. Legal basis: mere aggregation (GPL-3.0 data extracted to disk, consumed via `os/exec`). GH Actions workflow `build-espeak.yml` (manual trigger) builds binaries on native runners. Pure Go phonemizer alternatives (goruut) rejected — Kokoro's IPA vocab is trained on espeak-ng output, mismatch risk too high.
+- **espeak-ng via download-on-first-run**: pre-built static espeak-ng binaries + data live in `cattery-artefacts/espeak-ng-v1.51/` (Git LFS), registered in `mirror.json`. Downloaded on first use like ORT and models, extracted to `~/.cattery/espeak-ng/`. Original `go:embed` approach dropped — espeak is a runtime dependency like all other artefacts, not worth +11MB binary bloat. GH Actions workflow `build-espeak.yml` (manual trigger) builds binaries on native runners. Legal basis: mere aggregation (GPL-3.0 data extracted to disk, consumed via `os/exec`). Pure Go phonemizer alternatives (goruut) rejected — Kokoro's IPA vocab is trained on espeak-ng output, mismatch risk too high.
 - **Remote models are just models**: no `--remote` flag. OpenAI engines are registered models (`openai-tts-1`, `openai-whisper-1`) selected via `--model`. Remote models only appear in `cattery list` when `OPENAI_API_KEY` is set. Default is always local — no accidental API spend. `OPENAI_BASE_URL` supports OpenRouter, Ollama, Azure. No SDK — pure `net/http`.
 - **Dual-mode operation**: local models (Pi4, offline, free) OR remote APIs (zero download, higher quality, paid). Same CLI, same server, same `speak.Engine`/`listen.Engine` interface.
 - **Numeric indices everywhere**: models and voices addressed by stable per-kind numeric index in CLI (`--voice 4 --model 1`). Slugs exist but are never required input. API responses always include both index and slug. Indices are 1-based, stable, never reassigned.

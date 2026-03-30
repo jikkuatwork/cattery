@@ -18,15 +18,19 @@ On Pi4 / embedded / air-gapped systems, requiring apt access adds friction, may 
 
 ## Goal
 
-Eliminate the espeak-ng system dependency by embedding espeak-ng binary + data inside the cattery Go binary via `go:embed`. After `go install`, the first `cattery` invocation works with zero network and zero system packages.
+Eliminate the espeak-ng system dependency. After `go install`, `cattery` auto-downloads espeak-ng on first run (same as ORT and models) — no `apt install` required.
 
-Key constraint: **air-gapped durability**. Once cattery is installed, it must never need the internet again. No download-on-first-run. No URLs to rot. The binary is self-contained forever.
+## Decision: download-on-first-run (revised 2026-03-30)
 
-## Decision: embed via `go:embed` (not download-on-first-run)
+Original plan was `go:embed`. Revised because:
+- cattery already requires first-run downloads (ORT, models, voices) — espeak is no different
+- +11MB binary bloat for a purity that doesn't exist (network is already required)
+- 11MB of tarballs checked into git history is unnecessary repo bloat
+- `cattery-artefacts` is the canonical home for all runtime dependencies
 
-### Why not download-on-first-run?
+Artefacts now live at `cattery-artefacts/espeak-ng-v1.51/` (Git LFS), registered in `mirror.json`. `phonemize/bundle/` purged from cattery git history.
 
-The download approach (original design) has real fragility for a project targeting long-term durability:
+### Previous rationale (archived)
 
 - GitHub LFS has bandwidth quotas — can get throttled
 - Repos get renamed, deleted, or transferred

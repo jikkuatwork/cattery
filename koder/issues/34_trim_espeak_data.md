@@ -1,6 +1,6 @@
 # 34 — Trim espeak-ng-data to English-only
 
-## Status: open
+## Status: **dropped** (2026-03-30 — keeping all 117 languages; no longer embedding so size cost is negligible)
 ## Priority: P3
 
 ## Problem
