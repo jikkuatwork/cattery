@@ -130,6 +130,7 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 - **#12 LLM proxy** — unified AI backend (`cattery think`); may merge with #13's server endpoint
 - **#07** License compliance follow-through (now includes Qwen3.5 Apache-2.0)
 - **#33** Enable GH Actions PR permission (one-time repo setting, P3)
+- **LLM `<think>` tag stripping** — Qwen3.5 emits `<think>…</think>` reasoning tokens; currently shown raw in CLI and API output
 - ~~**#34** Trim espeak-ng-data to English-only~~ — dropped; keeping all 117 languages
 - ~~**#23 OpenAI remote engines**~~ — deferred (pure local focus)
 - Vision: single-binary conversational system (STT → LLM → TTS) for indie builders on Pi4 — now architecturally complete

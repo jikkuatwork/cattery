@@ -965,15 +965,15 @@ func orderedKindsFor(models []*registry.Model, order []registry.Kind) []registry
 }
 
 func displayKindOrder() []registry.Kind {
-	return []registry.Kind{registry.KindTTS, registry.KindSTT}
+	return []registry.Kind{registry.KindTTS, registry.KindSTT, registry.KindLLM}
 }
 
 func cliKindOrder() []registry.Kind {
-	return []registry.Kind{registry.KindTTS, registry.KindSTT, registry.KindRuntime}
+	return []registry.Kind{registry.KindTTS, registry.KindSTT, registry.KindLLM, registry.KindRuntime}
 }
 
 func downloadKindOrder() []registry.Kind {
-	return []registry.Kind{registry.KindRuntime, registry.KindTTS, registry.KindSTT}
+	return []registry.Kind{registry.KindRuntime, registry.KindTTS, registry.KindSTT, registry.KindLLM}
 }
 
 func kindTitle(kind registry.Kind) string {
