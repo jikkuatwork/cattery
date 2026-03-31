@@ -40,18 +40,16 @@ var ortDrain = ort.Drain
 
 // Config holds server configuration.
 type Config struct {
-	Port        int
-	TTSWorkers  int
-	STTWorkers  int
-	QueueMax    int
-	MaxChars    int
-	IdleTimeout time.Duration
-	KeepAlive   bool
-	Auth        bool
-	TTSModel    int
-	STTModel    int
-	LLMModel    int
-	ChunkSize   time.Duration
+	Port         int
+	TTSWorkers   int
+	STTWorkers   int
+	QueueMax     int
+	MaxChars     int
+	MemoryBudget int64
+	IdleTimeout  time.Duration
+	KeepAlive    bool
+	Auth         bool
+	ChunkSize    time.Duration
 }
 
 // Server is the cattery HTTP server.
@@ -211,26 +209,17 @@ func New(cfg Config) (*Server, error) {
 	if cfg.IdleTimeout == 0 && !cfg.KeepAlive {
 		cfg.IdleTimeout = 300 * time.Second
 	}
-	if cfg.TTSModel == 0 {
-		model := registry.Default(registry.KindTTS)
-		if model == nil {
-			return nil, fmt.Errorf("no TTS models registered")
-		}
-		cfg.TTSModel = model.Index
+	ttsModel := registry.Default(registry.KindTTS)
+	if ttsModel == nil {
+		return nil, fmt.Errorf("no TTS models registered")
 	}
-	if cfg.STTModel == 0 {
-		model := registry.Default(registry.KindSTT)
-		if model == nil {
-			return nil, fmt.Errorf("no STT models registered")
-		}
-		cfg.STTModel = model.Index
+	sttModel := registry.Default(registry.KindSTT)
+	if sttModel == nil {
+		return nil, fmt.Errorf("no STT models registered")
 	}
-	if cfg.LLMModel == 0 {
-		model := registry.Default(registry.KindLLM)
-		if model == nil {
-			return nil, fmt.Errorf("no LLM models registered")
-		}
-		cfg.LLMModel = model.Index
+	llmModel := registry.Default(registry.KindLLM)
+	if llmModel == nil {
+		return nil, fmt.Errorf("no LLM models registered")
 	}
 	resolvedChunkSize, err := resolveServerChunkSizeFromEnv(cfg.ChunkSize, os.Stderr)
 	if err != nil {
@@ -238,26 +227,14 @@ func New(cfg Config) (*Server, error) {
 	}
 	cfg.ChunkSize = resolvedChunkSize
 
-	ttsModel := registry.GetByIndex(registry.KindTTS, cfg.TTSModel)
-	if ttsModel == nil {
-		return nil, fmt.Errorf("unknown TTS model %d", cfg.TTSModel)
-	}
 	if ttsModel.Location != registry.Local {
 		return nil, fmt.Errorf("remote TTS model %q is not supported yet", ttsModel.ID)
 	}
 
-	sttModel := registry.GetByIndex(registry.KindSTT, cfg.STTModel)
-	if sttModel == nil {
-		return nil, fmt.Errorf("unknown STT model %d", cfg.STTModel)
-	}
 	if sttModel.Location != registry.Local {
 		return nil, fmt.Errorf("remote STT model %q is not supported yet", sttModel.ID)
 	}
 
-	llmModel := registry.GetByIndex(registry.KindLLM, cfg.LLMModel)
-	if llmModel == nil {
-		return nil, fmt.Errorf("unknown LLM model %d", cfg.LLMModel)
-	}
 	if llmModel.Location != registry.Local {
 		return nil, fmt.Errorf("remote LLM model %q is not supported yet", llmModel.ID)
 	}
@@ -326,6 +303,7 @@ func New(cfg Config) (*Server, error) {
 		Workers:     cfg.TTSWorkers,
 		IdleTimeout: cfg.IdleTimeout,
 		KeepAlive:   cfg.KeepAlive,
+		MemEstimate: ttsModel.TotalFileSize() * 2,
 		Create: func() (tts.Engine, error) {
 			if err := s.ensureORT(); err != nil {
 				return nil, err
@@ -343,6 +321,7 @@ func New(cfg Config) (*Server, error) {
 		Workers:     cfg.STTWorkers,
 		IdleTimeout: cfg.IdleTimeout,
 		KeepAlive:   cfg.KeepAlive,
+		MemEstimate: sttModel.TotalFileSize() * 2,
 		Create: func() (stt.Engine, error) {
 			if err := s.ensureORT(); err != nil {
 				return nil, err
@@ -360,6 +339,7 @@ func New(cfg Config) (*Server, error) {
 		Workers:     1,
 		IdleTimeout: cfg.IdleTimeout,
 		KeepAlive:   cfg.KeepAlive,
+		MemEstimate: llmModel.TotalFileSize() * 2,
 		Create: func() (llm.Engine, error) {
 			if err := s.ensureORT(); err != nil {
 				return nil, err
@@ -735,27 +715,58 @@ func (s *Server) onPoolsEmpty() {
 }
 
 func (s *Server) borrowLLM(ctx context.Context) (llm.Engine, error) {
-	if s.ttsPool != nil {
-		s.ttsPool.EvictIdle()
-	}
-	if s.sttPool != nil {
-		s.sttPool.EvictIdle()
+	if !s.canCoResident(s.llmPool.MemEstimate()) {
+		if s.ttsPool != nil {
+			s.ttsPool.EvictIdle()
+		}
+		if s.sttPool != nil {
+			s.sttPool.EvictIdle()
+		}
 	}
 	return s.llmPool.Borrow(ctx, s.queue, &s.queued)
 }
 
 func (s *Server) borrowTTS(ctx context.Context) (tts.Engine, error) {
-	if s.llmPool != nil {
+	if s.llmPool != nil && !s.canCoResident(s.ttsPool.MemEstimate()) {
 		s.llmPool.EvictIdle()
 	}
 	return s.ttsPool.Borrow(ctx, s.queue, &s.queued)
 }
 
 func (s *Server) borrowSTT(ctx context.Context) (stt.Engine, error) {
-	if s.llmPool != nil {
+	if s.llmPool != nil && !s.canCoResident(s.sttPool.MemEstimate()) {
 		s.llmPool.EvictIdle()
 	}
 	return s.sttPool.Borrow(ctx, s.queue, &s.queued)
+}
+
+func (s *Server) canCoResident(borrowingEstimate int64) bool {
+	if s.cfg.MemoryBudget == 0 {
+		return false
+	}
+
+	total := int64(0)
+	borrowingPresent := false
+
+	for _, pool := range []interface {
+		Empty() bool
+		MemEstimate() int64
+	}{s.ttsPool, s.sttPool, s.llmPool} {
+		if pool == nil || pool.Empty() {
+			continue
+		}
+		estimate := pool.MemEstimate()
+		total += estimate
+		if !borrowingPresent && estimate == borrowingEstimate {
+			borrowingPresent = true
+		}
+	}
+
+	if !borrowingPresent {
+		total += borrowingEstimate
+	}
+
+	return total <= s.cfg.MemoryBudget
 }
 
 func (s *Server) closeLLMEngine(eng llm.Engine) error {

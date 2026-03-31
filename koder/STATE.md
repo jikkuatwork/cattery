@@ -120,6 +120,7 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [33](issues/33_gh_actions_pr_permission.md) | Enable GH Actions PR creation permission | open | P3 |
 | [34](issues/34_trim_espeak_data.md) | Trim espeak-ng-data to English-only | **dropped** | P3 |
 | [35](issues/35_mirror_ort.md) | Mirror ORT into cattery-artefacts | **done** | P1 |
+| [36](issues/36_serve_memory_semantics.md) | Serve --memory semantics | open | P3 |
 
 ## What's Next
 
@@ -130,6 +131,7 @@ All artefacts (ORT, models, voices, espeak) now self-hosted in `cattery-artefact
 - **#12 LLM proxy** — unified AI backend (`cattery think`); may merge with #13's server endpoint
 - **#07** License compliance follow-through (now includes Qwen3.5 Apache-2.0)
 - **#33** Enable GH Actions PR permission (one-time repo setting, P3)
+- **#36** Serve `--memory` semantics — decide if co-residency hint is the right abstraction (P3)
 - **LLM `<think>` tag stripping** — Qwen3.5 emits `<think>…</think>` reasoning tokens; currently shown raw in CLI and API output
 - ~~**#34** Trim espeak-ng-data to English-only~~ — dropped; keeping all 117 languages
 - ~~**#23 OpenAI remote engines**~~ — deferred (pure local focus)
@@ -190,7 +192,8 @@ All artefacts (ORT, models, voices, espeak) now self-hosted in `cattery-artefact
 - **Server auth is opt-in**: `--auth` flag enables Bearer token auth with `~/.cattery/keys.json`. Off by default — zero overhead. Keys are `cat_`-prefixed, SHA-256 hashed at rest, managed via `cattery keys create/list/revoke/delete`. Per-key rate limiting (fixed-window, in-memory). `/v1/status` always public. Hot-reloads keys on file change.
 - **Pure local focus (2026-03)**: remote engine support (#23) deferred. Cattery stays local-only for now. Auth, rate limiting, and API design assume local inference.
 - **LLM model: Qwen3.5-4B int4**: selected March 2026 after evaluating Qwen3.5 (0.8B/2B/4B), Qwen3, Phi-4-mini, Llama 3.2, Gemma 3. Dense architecture, Apache 2.0, ~2.5-3GB RAM. ONNX export exists at `onnx-community/Qwen3.5-4B-ONNX` (~2.91 GiB text-only q4). Uses ONNX Runtime (not llama.cpp) to avoid second inference engine.
-- **LLM engine swapping**: Pi4 4GB target. Only one heavy engine loaded at a time — pool eviction + malloc_trim between STT → LLM → TTS phases. ~1.4s swap cost per transition. Estimated round-trip ~8-12s on Pi4.
+- **LLM engine swapping**: Pi4 4GB target. Only one heavy engine loaded at a time — pool eviction + malloc_trim between STT → LLM → TTS phases. ~1.4s swap cost per transition. Estimated round-trip ~8-12s on Pi4. `--memory SIZE` flag on serve allows co-residency when budget permits; semantics are still open (#36).
+- **CLI uniformity (2026-03)**: All three modality verbs (`tts`, `stt`, `llm`) share consistent flag patterns: `--model`, `--output -o`, `--chunk-size` (where applicable), proper `missing value for --flag` errors, and a stderr summary line (`target | model, metric, elapsed`). Serve no longer accepts model flags — it always uses registry defaults; requests specify model via the API body.
 - **Repo-local Codex workflow**: `.codex/skills/open` and `.codex/skills/close` are tracked in-repo, not globally. `open` should read `koder/STATE.md` first after restarts; `close` should sync `koder/STATE.md`, validate changed local skills, and commit a coherent session when explicitly invoked.
 
 ## Research

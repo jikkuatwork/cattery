@@ -82,11 +82,55 @@ func TestAdvancedUsageMentionsLLMFlags(t *testing.T) {
 		"llm         Local text generation",
 		"--system TEXT    System prompt",
 		"--stdin          Read prompt from stdin",
+		"--output, -o     Output text file (default: stdout)",
 		"--model REF      LLM model index or ID (default: 1)",
 		"--max-tokens N   Maximum output tokens",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("advanced help missing %q in %q", want, output)
+		}
+	}
+}
+
+func TestAdvancedUsageServeFlagsAreUpdated(t *testing.T) {
+	output := captureStderr(t, printAdvancedUsage)
+	if strings.Contains(output, "--tts-model") {
+		t.Fatalf("advanced help should not mention --tts-model: %q", output)
+	}
+	if strings.Contains(output, "--stt-model") {
+		t.Fatalf("advanced help should not mention --stt-model: %q", output)
+	}
+	if !strings.Contains(output, "--memory SIZE    Memory budget for engine co-residency (e.g. 8G)") {
+		t.Fatalf("advanced help missing --memory flag: %q", output)
+	}
+}
+
+func TestParseMemorySize(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int64
+	}{
+		{input: "512", want: 512 * (1 << 20)},
+		{input: "512M", want: 512 * (1 << 20)},
+		{input: "4G", want: 4 * (1 << 30)},
+		{input: "8g", want: 8 * (1 << 30)},
+	}
+
+	for _, tt := range tests {
+		got, err := parseMemorySize(tt.input)
+		if err != nil {
+			t.Fatalf("parseMemorySize(%q) error = %v", tt.input, err)
+		}
+		if got != tt.want {
+			t.Fatalf("parseMemorySize(%q) = %d, want %d", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestParseMemorySizeRejectsInvalidValues(t *testing.T) {
+	for _, input := range []string{"", "0", "-1G", "4T", "abc"} {
+		if _, err := parseMemorySize(input); err == nil {
+			t.Fatalf("parseMemorySize(%q) error = nil", input)
 		}
 	}
 }

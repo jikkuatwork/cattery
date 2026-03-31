@@ -28,19 +28,22 @@ func cmdSTT(args []string) error {
 		switch args[i] {
 		case "--lang":
 			i++
-			if i < len(args) {
-				lang = args[i]
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --lang")
 			}
+			lang = args[i]
 		case "--output", "-o":
 			i++
-			if i < len(args) {
-				outputPath = args[i]
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --output")
 			}
+			outputPath = args[i]
 		case "--model":
 			i++
-			if i < len(args) {
-				modelRef = args[i]
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --model")
 			}
+			modelRef = args[i]
 		case "--chunk-size":
 			i++
 			if i >= len(args) {

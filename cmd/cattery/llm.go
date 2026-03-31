@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jikkuatwork/cattery/download"
 	"github.com/jikkuatwork/cattery/llm"
@@ -20,6 +21,7 @@ func cmdLLM(args []string) error {
 	var (
 		systemPrompt string
 		modelRef     string
+		outputPath   string
 		promptParts  []string
 		readStdin    bool
 		maxTokens    int
@@ -35,6 +37,12 @@ func cmdLLM(args []string) error {
 			systemPrompt = args[i]
 		case "--stdin":
 			readStdin = true
+		case "--output", "-o":
+			i++
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --output")
+			}
+			outputPath = args[i]
 		case "--max-tokens":
 			i++
 			if i >= len(args) {
@@ -90,7 +98,14 @@ func cmdLLM(args []string) error {
 	}
 	defer eng.Close()
 
+	output, err := openTextOutput(outputPath)
+	if err != nil {
+		return err
+	}
+	defer output.Close()
+
 	var result *llm.Result
+	t0 := time.Now()
 	err = preflight.GuardMemoryError("text generation", func() error {
 		var innerErr error
 		result, innerErr = eng.Generate(context.Background(), prompt, llm.Options{
@@ -102,27 +117,30 @@ func cmdLLM(args []string) error {
 	if err != nil {
 		return err
 	}
+	elapsed := time.Since(t0)
 
 	if result == nil {
 		return fmt.Errorf("generation failed")
 	}
-	if _, err := io.WriteString(os.Stdout, result.Text); err != nil {
+	if _, err := io.WriteString(output.writer, result.Text); err != nil {
 		return err
 	}
+	fmt.Fprintf(os.Stderr, "%s | %s, %d tokens, %.1fs\n",
+		output.name, model.Name, result.TokensUsed, elapsed.Seconds())
 	return nil
 }
 
 func resolveLLMPrompt(parts []string, readFromStdin bool) (string, error) {
 	if readFromStdin {
 		if len(parts) > 0 {
-			return "", fmt.Errorf("prompt provided twice\nUsage: cattery llm [--system TEXT] [--stdin] [--model REF] [--max-tokens N] \"prompt\"")
+			return "", fmt.Errorf("prompt provided twice\nUsage: cattery llm [--system TEXT] [--stdin] [--output PATH] [--model REF] [--max-tokens N] \"prompt\"")
 		}
 		return readStdinText()
 	}
 
 	prompt := strings.TrimSpace(strings.Join(parts, " "))
 	if prompt == "" {
-		return "", fmt.Errorf("no prompt provided\nUsage: cattery llm [--system TEXT] [--stdin] [--model REF] [--max-tokens N] \"prompt\"")
+		return "", fmt.Errorf("no prompt provided\nUsage: cattery llm [--system TEXT] [--stdin] [--output PATH] [--model REF] [--max-tokens N] \"prompt\"")
 	}
 	return prompt, nil
 }

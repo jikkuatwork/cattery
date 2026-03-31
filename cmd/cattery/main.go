@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	goruntime "runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -103,66 +104,64 @@ func cmdServe(args []string) error {
 		switch args[i] {
 		case "--port", "-p":
 			i++
-			if i < len(args) {
-				fmt.Sscanf(args[i], "%d", &cfg.Port)
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --port")
 			}
+			fmt.Sscanf(args[i], "%d", &cfg.Port)
 		case "--tts-workers", "-w":
 			i++
-			if i < len(args) {
-				fmt.Sscanf(args[i], "%d", &cfg.TTSWorkers)
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --tts-workers")
 			}
+			fmt.Sscanf(args[i], "%d", &cfg.TTSWorkers)
 		case "--stt-workers":
 			i++
-			if i < len(args) {
-				fmt.Sscanf(args[i], "%d", &cfg.STTWorkers)
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --stt-workers")
 			}
+			fmt.Sscanf(args[i], "%d", &cfg.STTWorkers)
 		case "--max-chars":
 			i++
-			if i < len(args) {
-				fmt.Sscanf(args[i], "%d", &cfg.MaxChars)
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --max-chars")
 			}
+			fmt.Sscanf(args[i], "%d", &cfg.MaxChars)
 		case "--queue-max":
 			i++
-			if i < len(args) {
-				fmt.Sscanf(args[i], "%d", &cfg.QueueMax)
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --queue-max")
 			}
+			fmt.Sscanf(args[i], "%d", &cfg.QueueMax)
 		case "--idle-timeout":
 			i++
-			if i < len(args) {
-				fmt.Sscanf(args[i], "%d", &idleSec)
-				cfg.IdleTimeout = time.Duration(idleSec) * time.Second
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --idle-timeout")
 			}
+			fmt.Sscanf(args[i], "%d", &idleSec)
+			cfg.IdleTimeout = time.Duration(idleSec) * time.Second
 		case "--keep-alive":
 			cfg.KeepAlive = true
 		case "--auth":
 			cfg.Auth = true
+		case "--memory":
+			i++
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --memory")
+			}
+			budget, err := parseMemorySize(args[i])
+			if err != nil {
+				return err
+			}
+			cfg.MemoryBudget = budget
 		case "--chunk-size":
 			i++
 			if i >= len(args) {
 				return fmt.Errorf("missing value for --chunk-size")
 			}
 			chunkSizeFlag = args[i]
-		case "--model", "--tts-model":
-			i++
-			if i < len(args) {
-				index, err := resolveServeModelIndex(registry.KindTTS, args[i])
-				if err != nil {
-					return err
-				}
-				cfg.TTSModel = index
-			}
-		case "--stt-model":
-			i++
-			if i < len(args) {
-				index, err := resolveServeModelIndex(registry.KindSTT, args[i])
-				if err != nil {
-					return err
-				}
-				cfg.STTModel = index
-			}
 		default:
 			return fmt.Errorf(
-				"unknown flag %q for serve\nUsage: cattery serve [--port 7100] [--tts-workers 1] [--stt-workers 1] [--chunk-size 30s] [--auth]",
+				"unknown flag %q for serve\nRun 'cattery help --advanced' for all serve flags",
 				args[i],
 			)
 		}
@@ -204,33 +203,38 @@ func cmdTTS(args []string) error {
 		switch args[i] {
 		case "--voice":
 			i++
-			if i < len(args) {
-				voiceFlag = args[i]
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --voice")
 			}
+			voiceFlag = args[i]
 		case "--male":
 			genderFilter = "male"
 		case "--female":
 			genderFilter = "female"
 		case "--speed":
 			i++
-			if i < len(args) {
-				fmt.Sscanf(args[i], "%f", &speed)
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --speed")
 			}
+			fmt.Sscanf(args[i], "%f", &speed)
 		case "--output", "-o":
 			i++
-			if i < len(args) {
-				outputPath = args[i]
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --output")
 			}
+			outputPath = args[i]
 		case "--lang":
 			i++
-			if i < len(args) {
-				lang = args[i]
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --lang")
 			}
+			lang = args[i]
 		case "--model":
 			i++
-			if i < len(args) {
-				modelRef = args[i]
+			if i >= len(args) {
+				return fmt.Errorf("missing value for --model")
 			}
+			modelRef = args[i]
 		case "--chunk-size":
 			i++
 			if i >= len(args) {
@@ -577,6 +581,7 @@ LLM:
   cattery llm "What is the capital of France?"
   cattery llm --system "You are helpful" "Hi"
   cattery llm --stdin < prompt.txt
+  --output, -o     Output text file (default: stdout)
 
 Server:
   cattery serve --port 8080
@@ -631,6 +636,7 @@ STT flags:
 LLM flags:
   --system TEXT    System prompt
   --stdin          Read prompt from stdin
+  --output, -o     Output text file (default: stdout)
   --model REF      LLM model index or ID (default: 1)
   --max-tokens N   Maximum output tokens
 
@@ -651,13 +657,13 @@ Server:
   cattery serve --tts-workers 2
   cattery serve --stt-workers 2
   cattery serve --chunk-size 20s
-  cattery serve --tts-model 1
-  cattery serve --stt-model 1
+  cattery serve --memory 8G
   cattery serve --max-chars 300
   cattery serve --queue-max 10
   cattery serve --idle-timeout 600
   cattery serve --keep-alive
   cattery serve --auth
+  --memory SIZE    Memory budget for engine co-residency (e.g. 8G)
 
 Keys:
   cattery keys create --name my-app
@@ -1015,14 +1021,6 @@ func knownCommandNames() []string {
 	return []string{"tts", "stt", "llm", "serve", "keys", "list", "status", "download", "help", "version"}
 }
 
-func resolveServeModelIndex(kind registry.Kind, ref string) (int, error) {
-	model := registry.Resolve(kind, ref)
-	if model == nil {
-		return 0, fmt.Errorf("unknown %s model %q", strings.ToUpper(string(kind)), ref)
-	}
-	return model.Index, nil
-}
-
 func parseIndex(ref string) (int, bool) {
 	var index int
 	if _, err := fmt.Sscanf(strings.TrimSpace(ref), "%d", &index); err != nil || index < 1 {
@@ -1045,6 +1043,34 @@ func modelKindAddressable(kind registry.Kind) bool {
 	default:
 		return false
 	}
+}
+
+func parseMemorySize(s string) (int64, error) {
+	raw := strings.TrimSpace(s)
+	if raw == "" {
+		return 0, fmt.Errorf("invalid value for --memory: %q", s)
+	}
+
+	multiplier := int64(1 << 20)
+	number := raw
+	switch suffix := strings.ToUpper(raw[len(raw)-1:]); suffix {
+	case "M":
+		number = strings.TrimSpace(raw[:len(raw)-1])
+	case "G":
+		number = strings.TrimSpace(raw[:len(raw)-1])
+		multiplier = 1 << 30
+	default:
+		if raw[len(raw)-1] < '0' || raw[len(raw)-1] > '9' {
+			return 0, fmt.Errorf("invalid value for --memory: %q", s)
+		}
+	}
+
+	value, err := strconv.ParseInt(number, 10, 64)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("invalid value for --memory: %q", s)
+	}
+
+	return value * multiplier, nil
 }
 
 func newLLMEngine(model *registry.Model, dataDir string) (*qwen.Engine, error) {

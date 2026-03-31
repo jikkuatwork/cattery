@@ -50,6 +50,19 @@ type Model struct {
 	Meta        map[string]string
 }
 
+// TotalFileSize returns the combined size of all downloadable model artefacts.
+func (m *Model) TotalFileSize() int64 {
+	if m == nil {
+		return 0
+	}
+
+	var total int64
+	for i := range m.Files {
+		total += m.Files[i].SizeBytes
+	}
+	return total
+}
+
 // Voice describes a voice available for a TTS model.
 type Voice struct {
 	ID          string

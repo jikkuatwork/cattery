@@ -17,6 +17,7 @@ type PoolConfig[T any] struct {
 	Workers     int
 	IdleTimeout time.Duration
 	KeepAlive   bool
+	MemEstimate int64
 	Create      func() (T, error)
 	Close       func(T) error
 	OnEmpty     func()
@@ -28,6 +29,7 @@ type Pool[T any] struct {
 	workers     int
 	idleTimeout time.Duration
 	keepAlive   bool
+	memEstimate int64
 	create      func() (T, error)
 	close       func(T) error
 	onEmpty     func()
@@ -62,6 +64,7 @@ func NewPool[T any](cfg PoolConfig[T]) *Pool[T] {
 		workers:     cfg.Workers,
 		idleTimeout: cfg.IdleTimeout,
 		keepAlive:   cfg.KeepAlive,
+		memEstimate: cfg.MemEstimate,
 		create:      cfg.Create,
 		close:       cfg.Close,
 		onEmpty:     cfg.OnEmpty,
@@ -149,6 +152,11 @@ func (p *Pool[T]) Stats() PoolStats {
 		Workers:      p.workers,
 		EnginesReady: len(p.idle),
 	}
+}
+
+// MemEstimate reports the estimated memory footprint of one engine instance.
+func (p *Pool[T]) MemEstimate() int64 {
+	return p.memEstimate
 }
 
 // Empty reports whether all engines have been evicted.

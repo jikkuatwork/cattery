@@ -250,6 +250,82 @@ func TestBorrowLLMEvictsIdlePools(t *testing.T) {
 	}
 }
 
+func TestBorrowLLMKeepsIdlePoolsWithinMemoryBudget(t *testing.T) {
+	model := registry.Default(registry.KindLLM)
+	if model == nil {
+		t.Fatal("missing default LLM model")
+	}
+
+	var ttsClosed atomic.Int64
+	var sttClosed atomic.Int64
+
+	ttsPool := NewPool(PoolConfig[tts.Engine]{
+		Name:        "tts",
+		Workers:     1,
+		KeepAlive:   true,
+		MemEstimate: 10,
+		Create:      func() (tts.Engine, error) { return &fakeTTSEngine{}, nil },
+		Close: func(tts.Engine) error {
+			ttsClosed.Add(1)
+			return nil
+		},
+	})
+	sttPool := NewPool(PoolConfig[stt.Engine]{
+		Name:        "stt",
+		Workers:     1,
+		KeepAlive:   true,
+		MemEstimate: 20,
+		Create:      func() (stt.Engine, error) { return &fakeSTTEngine{}, nil },
+		Close: func(stt.Engine) error {
+			sttClosed.Add(1)
+			return nil
+		},
+	})
+	llmPool := NewPool(PoolConfig[llm.Engine]{
+		Name:        "llm",
+		Workers:     1,
+		KeepAlive:   true,
+		MemEstimate: 30,
+		Create: func() (llm.Engine, error) {
+			return &fakeLLMEngine{}, nil
+		},
+		Close: func(eng llm.Engine) error { return eng.Close() },
+	})
+	if err := ttsPool.Prewarm(); err != nil {
+		t.Fatalf("ttsPool.Prewarm(): %v", err)
+	}
+	if err := sttPool.Prewarm(); err != nil {
+		t.Fatalf("sttPool.Prewarm(): %v", err)
+	}
+
+	srv := &Server{
+		cfg:      Config{MemoryBudget: 60},
+		llmModel: model,
+		ttsPool:  ttsPool,
+		sttPool:  sttPool,
+		llmPool:  llmPool,
+	}
+
+	eng, err := srv.borrowLLM(context.Background())
+	if err != nil {
+		t.Fatalf("borrowLLM(): %v", err)
+	}
+	srv.llmPool.Return(eng)
+
+	if ttsClosed.Load() != 0 {
+		t.Fatalf("tts evictions = %d, want 0", ttsClosed.Load())
+	}
+	if sttClosed.Load() != 0 {
+		t.Fatalf("stt evictions = %d, want 0", sttClosed.Load())
+	}
+	if got := srv.ttsPool.Stats().EnginesReady; got != 1 {
+		t.Fatalf("tts idle engines = %d, want 1", got)
+	}
+	if got := srv.sttPool.Stats().EnginesReady; got != 1 {
+		t.Fatalf("stt idle engines = %d, want 1", got)
+	}
+}
+
 func TestCloseLLMEngineDrainsORT(t *testing.T) {
 	var drained atomic.Int64
 	originalDrain := ortDrain
