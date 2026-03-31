@@ -137,6 +137,7 @@ All artefacts (ORT, models, voices, espeak) now self-hosted in `cattery-artefact
 
 ## Key Decisions Made
 
+- **Zero external dependencies (non-negotiable)**: The entire system — code, models, voices, runtime, phonemizer — lives exclusively in `cattery` and `cattery-artefacts`. No download, fetch, or network call may target any host outside these two repos. Future CDN mirrors are fine *only* if they serve copies of assets already in `cattery-artefacts`; the GitHub raw URL for `cattery-artefacts` must always remain a working fallback. Any change that introduces a third-party download dependency violates this constraint and must not be merged.
 - **No pure Go ONNX**: GoMLX/gonnx lack FFT/ISTFT ops. ORT via dlopen is the only path.
 - **Download on first run**: binary stays ~8MB, while ORT/model/voice artefacts are fetched as needed. `espeak-ng` stays external.
 - **Separate artefacts repo**: `cattery-artefacts` holds binaries via Git LFS. No auth. All models (TTS + STT) self-hosted — no HuggingFace dependency.
