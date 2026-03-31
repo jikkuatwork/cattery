@@ -440,10 +440,15 @@ func downloadORT(ortDir, version string, style *barStyle) (string, error) {
 
 	tgzName := fmt.Sprintf("onnxruntime-%s-%s-%s.tgz", osName, arch, version)
 	mirrorKey := fmt.Sprintf("ort/v%s/%s", version, tgzName)
-	microsoftURL := fmt.Sprintf(
-		"https://github.com/microsoft/onnxruntime/releases/download/v%s/%s",
-		version, tgzName,
-	)
+
+	idx := getMirrorIndex()
+	if idx == nil {
+		return "", fmt.Errorf("mirror index unavailable")
+	}
+	entry := idx.LookupRaw(mirrorKey)
+	if entry == nil {
+		return "", fmt.Errorf("ORT %s not found in mirror index (key %s)", version, mirrorKey)
+	}
 
 	tmpPath, err := reserveTempPath("cattery-ort-*.tgz")
 	if err != nil {
@@ -451,27 +456,7 @@ func downloadORT(ortDir, version string, style *barStyle) (string, error) {
 	}
 	defer os.Remove(tmpPath)
 
-	// Resolve download source: mirror first, Microsoft fallback.
-	var (
-		url     string
-		mirrors []MirrorSource
-		size    int64
-		sha256  string
-	)
-	if idx := getMirrorIndex(); idx != nil {
-		if entry := idx.LookupRaw(mirrorKey); entry != nil {
-			url = firstMirrorURL(entry)
-			mirrors = mirrorSources(entry)
-			size = entry.Size
-			sha256 = entry.SHA256
-		}
-	}
-	if url == "" {
-		url = microsoftURL
-		size = int64(defaultORTBytes)
-	}
-
-	if err := downloadWithBar(style, "Runtime", url, mirrors, tmpPath, size, sha256); err != nil {
+	if err := downloadWithBar(style, "Runtime", firstMirrorURL(entry), mirrorSources(entry), tmpPath, entry.Size, entry.SHA256); err != nil {
 		return "", err
 	}
 
