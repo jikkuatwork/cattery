@@ -29,7 +29,6 @@ import (
 	"github.com/jikkuatwork/cattery/llm"
 	"github.com/jikkuatwork/cattery/ort"
 	"github.com/jikkuatwork/cattery/paths"
-	"github.com/jikkuatwork/cattery/phonemize"
 	"github.com/jikkuatwork/cattery/preflight"
 	"github.com/jikkuatwork/cattery/registry"
 	"github.com/jikkuatwork/cattery/stt"
@@ -264,11 +263,8 @@ func New(cfg Config) (*Server, error) {
 	}
 	preflight.WarnLowLLMMemory(os.Stderr, llmModel)
 
-	if !phonemize.Available() {
-		return nil, fmt.Errorf("espeak-ng not found (required)")
-	}
-
 	dataDir := paths.DataDir()
+
 	var authStore *KeyStore
 	if cfg.Auth {
 		authStore = DefaultKeyStore()

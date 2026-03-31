@@ -61,3 +61,15 @@ func (idx *MirrorIndex) Lookup(modelID, filename string) *MirrorEntry {
 	}
 	return &entry
 }
+
+// LookupRaw returns a mirror entry by its exact key in the artefacts map.
+func (idx *MirrorIndex) LookupRaw(key string) *MirrorEntry {
+	if idx == nil {
+		return nil
+	}
+	entry, ok := idx.Artefacts[key]
+	if !ok {
+		return nil
+	}
+	return &entry
+}

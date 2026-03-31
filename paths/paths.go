@@ -38,3 +38,18 @@ func ModelFile(dataDir, modelID, filename string) string {
 func ORTLib(dataDir string) string {
 	return filepath.Join(dataDir, "ort")
 }
+
+// EspeakDir returns the espeak-ng installation directory.
+func EspeakDir(dataDir string) string {
+	return filepath.Join(dataDir, "espeak-ng")
+}
+
+// EspeakBin returns the path to the bundled espeak-ng binary.
+func EspeakBin(dataDir string) string {
+	return filepath.Join(EspeakDir(dataDir), "bin", "espeak-ng")
+}
+
+// EspeakData returns the path to the bundled espeak-ng data directory.
+func EspeakData(dataDir string) string {
+	return filepath.Join(EspeakDir(dataDir), "data")
+}

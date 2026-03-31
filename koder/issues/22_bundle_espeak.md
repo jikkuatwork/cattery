@@ -1,6 +1,6 @@
 # 22 — Bundle espeak-ng (zero system dependencies)
 
-## Status: open
+## Status: done
 ## Priority: P1
 ## Depends on: nothing
 ## Blocks: nothing (but critical for single-binary install story)

@@ -3,6 +3,7 @@ package phonemize
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -10,6 +11,14 @@ import (
 
 // punctRe matches punctuation that Kokoro treats as tokens.
 var punctRe = regexp.MustCompile(`([.,!?;:])`)
+
+// BinPath holds the resolved espeak-ng binary path.
+// Set by callers before first use, or falls back to system PATH.
+var BinPath string
+
+// DataPath holds the resolved espeak-ng data directory.
+// When non-empty, ESPEAK_DATA_PATH is set on every invocation.
+var DataPath string
 
 // EspeakPhonemizer uses espeak-ng via os/exec to produce IPA phonemes.
 type EspeakPhonemizer struct {
@@ -61,7 +70,15 @@ func (e *EspeakPhonemizer) espeakIPA(text string) (string, error) {
 		voice = "en-us"
 	}
 
-	cmd := exec.Command("espeak-ng", "-q", "--ipa=3", "--sep=", "-v", voice, text)
+	bin := BinPath
+	if bin == "" {
+		bin = "espeak-ng"
+	}
+
+	cmd := exec.Command(bin, "-q", "--ipa=3", "--sep=", "-v", voice, text)
+	if DataPath != "" {
+		cmd.Env = append(os.Environ(), "ESPEAK_DATA_PATH="+DataPath)
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("espeak-ng: %w", err)
@@ -80,8 +97,12 @@ func (e *EspeakPhonemizer) espeakIPA(text string) (string, error) {
 	return strings.Join(parts, " "), nil
 }
 
-// Available returns true if espeak-ng is found on PATH.
+// Available returns true if espeak-ng is available.
 func Available() bool {
+	if BinPath != "" {
+		_, err := os.Stat(BinPath)
+		return err == nil
+	}
 	_, err := exec.LookPath("espeak-ng")
 	return err == nil
 }

@@ -106,7 +106,7 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [19](issues/19_cli_redesign.md) | CLI redesign: subcommand-per-modality | **done** | P1 |
 | [20](issues/20_stt_package.md) | STT package: Moonshine-tiny | **done** | P1 |
 | [21](issues/21_server_api_redesign.md) | Server API redesign for multi-modality | **done** | P2 |
-| [22](issues/22_bundle_espeak.md) | Bundle espeak-ng (zero system deps) | **in progress** (artefacts moved, download logic next) | P1 |
+| [22](issues/22_bundle_espeak.md) | Bundle espeak-ng (zero system deps) | **done** | P1 |
 | [23](issues/23_openai_remote_engines.md) | OpenAI-compatible remote engines | open | P2 |
 | [24](issues/24_tts_sentence_chunking.md) | Transparent sentence chunking for long text TTS | **done** | P1 |
 | [25](issues/25_text_normalizer.md) | Pure Go text normalizer for TTS preprocessing | **done** | P1 |
@@ -122,11 +122,11 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 
 ## What's Next
 
-**#22 in progress** — espeak-ng binaries (3 platforms) + data (9.2MB, all 117 languages) moved from `phonemize/bundle/` to `cattery-artefacts/espeak-ng-v1.51/`. Registered in `mirror.json`. Old `go:embed` approach dropped — espeak is now download-on-first-run like ORT and models. `phonemize/bundle/` purged from git history. Next step: implement download + extraction logic in `phonemize/` (replace embed with `download/` calls).
+**Mirror ORT into cattery-artefacts** — ORT runtime is the last artefact still fetched from an external source (Microsoft GitHub Releases). Mirror the platform `.tgz` files into `cattery-artefacts`, register in `mirror.json`, and update `downloadORT()` to use mirrors. This gives cattery 100% artefact independence from external hosts.
 
 ### Open
 
-- **#22 Bundle espeak-ng** — artefacts in `cattery-artefacts`, need download + extraction logic in `phonemize/`
+- **Mirror ORT into cattery-artefacts** — last external download dependency (P1, next session)
 - **#12 LLM proxy** — unified AI backend (`cattery think`); may merge with #13's server endpoint
 - **#07** License compliance follow-through (now includes Qwen3.5 Apache-2.0)
 - **#33** Enable GH Actions PR permission (one-time repo setting, P3)

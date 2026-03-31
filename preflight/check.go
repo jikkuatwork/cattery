@@ -53,14 +53,18 @@ func Check(minMemMB int) *Status {
 		s.addError(fmt.Sprintf("insufficient memory: %d MB available, need %d MB", availMB, minMemMB))
 	}
 
-	// 2. espeak-ng
-	if !phonemize.Available() {
-		s.OK = false
-		s.addError("espeak-ng not found on PATH")
+	dataDir := paths.DataDir()
+
+	// 2. espeak-ng (bundled)
+	espeakBin := paths.EspeakBin(dataDir)
+	if _, err := os.Stat(espeakBin); err != nil {
+		if !phonemize.Available() {
+			s.OK = false
+			s.addError("espeak-ng not downloaded (run any TTS command to auto-download)")
+		}
 	}
 
 	// 3. Model files
-	dataDir := paths.DataDir()
 	model := registry.Default(registry.KindTTS)
 	if model != nil {
 		for _, file := range model.Files {

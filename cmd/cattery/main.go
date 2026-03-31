@@ -174,6 +174,11 @@ func cmdServe(args []string) error {
 	}
 	cfg.ChunkSize = chunkSize
 
+	dataDir := paths.DataDir()
+	if err := setupEspeak(dataDir); err != nil {
+		return err
+	}
+
 	srv, err := server.New(cfg)
 	if err != nil {
 		return err
@@ -261,16 +266,15 @@ func cmdTTS(args []string) error {
 		return err
 	}
 
-	if !phonemize.Available() {
-		return fmt.Errorf("espeak-ng not found\n\nInstall it:\n  Linux:  sudo apt install espeak-ng\n  macOS:  brew install espeak-ng")
-	}
-
 	chunkSize, err := resolveCommandChunkSize(chunkSizeFlag, os.Stderr)
 	if err != nil {
 		return err
 	}
 
 	dataDir := paths.DataDir()
+	if err := setupEspeak(dataDir); err != nil {
+		return err
+	}
 	files, err := download.Ensure(dataDir, model)
 	if err != nil {
 		return err
@@ -435,10 +439,13 @@ func cmdStatus(args []string) error {
 	fmt.Printf("  Data dir:      %s\n", dataDir)
 	fmt.Println()
 
-	if phonemize.Available() {
-		fmt.Println("  espeak-ng:     ✓ installed")
+	espeakBin := paths.EspeakBin(dataDir)
+	if _, err := os.Stat(espeakBin); err == nil {
+		fmt.Println("  espeak-ng:     ✓ bundled (v1.51)")
+	} else if phonemize.Available() {
+		fmt.Println("  espeak-ng:     ✓ system")
 	} else {
-		fmt.Println("  espeak-ng:     ✗ not found (required)")
+		fmt.Println("  espeak-ng:     ✗ not downloaded")
 	}
 
 	ortLib := findORTStatus(dataDir)
@@ -993,6 +1000,15 @@ func kindTitle(kind registry.Kind) string {
 
 func displayCommandNames() []string {
 	return []string{"tts", "stt", "llm", "serve", "status", "download", "help"}
+}
+
+func setupEspeak(dataDir string) error {
+	if err := download.EnsureEspeak(dataDir); err != nil {
+		return fmt.Errorf("espeak-ng setup: %w", err)
+	}
+	phonemize.BinPath = paths.EspeakBin(dataDir)
+	phonemize.DataPath = paths.EspeakData(dataDir)
+	return nil
 }
 
 func knownCommandNames() []string {
