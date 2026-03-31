@@ -72,7 +72,7 @@ func run() error {
 		printDefaultUsage()
 		return nil
 	case "version", "--version":
-		fmt.Println("cattery 0.1.0")
+		fmt.Println("cattery 0.9.0")
 		return nil
 	}
 
