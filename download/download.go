@@ -409,25 +409,25 @@ func downloadORT(ortDir, version string, style *barStyle) (string, error) {
 	}
 
 	var (
-		url     string
+		osName  string
+		arch    string
 		libName string
 	)
 
 	switch runtime.GOOS {
 	case "linux":
-		arch := runtime.GOARCH
+		osName = "linux"
+		arch = runtime.GOARCH
 		if arch == "amd64" {
 			arch = "x64"
 		} else if arch == "arm64" {
 			arch = "aarch64"
 		}
-		url = fmt.Sprintf("https://github.com/microsoft/onnxruntime/releases/download/v%s/onnxruntime-linux-%s-%s.tgz",
-			version, arch, version)
 		libName = fmt.Sprintf("libonnxruntime.so.%s", version)
 	case "darwin":
+		osName = "osx"
+		arch = "arm64"
 		// macOS ships arm64 only since ORT 1.20+
-		url = fmt.Sprintf("https://github.com/microsoft/onnxruntime/releases/download/v%s/onnxruntime-osx-arm64-%s.tgz",
-			version, version)
 		libName = fmt.Sprintf("libonnxruntime.%s.dylib", version)
 	default:
 		return "", fmt.Errorf("unsupported platform: %s/%s", runtime.GOOS, runtime.GOARCH)
@@ -438,43 +438,44 @@ func downloadORT(ortDir, version string, style *barStyle) (string, error) {
 		return destPath, nil
 	}
 
-	tmpFile, err := os.CreateTemp("", "cattery-ort-*.tgz")
+	tgzName := fmt.Sprintf("onnxruntime-%s-%s-%s.tgz", osName, arch, version)
+	mirrorKey := fmt.Sprintf("ort/v%s/%s", version, tgzName)
+	microsoftURL := fmt.Sprintf(
+		"https://github.com/microsoft/onnxruntime/releases/download/v%s/%s",
+		version, tgzName,
+	)
+
+	tmpPath, err := reserveTempPath("cattery-ort-*.tgz")
 	if err != nil {
 		return "", err
 	}
-	defer os.Remove(tmpFile.Name())
+	defer os.Remove(tmpPath)
 
-	resp, err := http.Get(url)
-	if err != nil {
-		tmpFile.Close()
-		return "", err
+	// Resolve download source: mirror first, Microsoft fallback.
+	var (
+		url     string
+		mirrors []MirrorSource
+		size    int64
+		sha256  string
+	)
+	if idx := getMirrorIndex(); idx != nil {
+		if entry := idx.LookupRaw(mirrorKey); entry != nil {
+			url = firstMirrorURL(entry)
+			mirrors = mirrorSources(entry)
+			size = entry.Size
+			sha256 = entry.SHA256
+		}
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		tmpFile.Close()
-		return "", fmt.Errorf("ONNX Runtime not available for %s/%s at version %s", runtime.GOOS, runtime.GOARCH, version)
-	}
-	if resp.StatusCode != http.StatusOK {
-		tmpFile.Close()
-		return "", fmt.Errorf("HTTP %d downloading ORT", resp.StatusCode)
+	if url == "" {
+		url = microsoftURL
+		size = int64(defaultORTBytes)
 	}
 
-	total := int64(defaultORTBytes)
-	if resp.ContentLength > 0 {
-		total = resp.ContentLength
-	}
-
-	b := newBar("Runtime", total, true, style)
-
-	_, err = io.Copy(io.MultiWriter(tmpFile, b), resp.Body)
-	tmpFile.Close()
-	b.finish()
-	if err != nil {
+	if err := downloadWithBar(style, "Runtime", url, mirrors, tmpPath, size, sha256); err != nil {
 		return "", err
 	}
 
-	if err := extractFromTarGz(tmpFile.Name(), "lib/"+libName, destPath); err != nil {
+	if err := extractFromTarGz(tmpPath, "lib/"+libName, destPath); err != nil {
 		return "", fmt.Errorf("extract: %w", err)
 	}
 

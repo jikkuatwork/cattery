@@ -119,14 +119,14 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 | [32](issues/32_openai_compat_api.md) | OpenAI-compatible server API | **done** (plan 32) | P1 |
 | [33](issues/33_gh_actions_pr_permission.md) | Enable GH Actions PR creation permission | open | P3 |
 | [34](issues/34_trim_espeak_data.md) | Trim espeak-ng-data to English-only | **dropped** | P3 |
+| [35](issues/35_mirror_ort.md) | Mirror ORT into cattery-artefacts | **done** | P1 |
 
 ## What's Next
 
-**Mirror ORT into cattery-artefacts** — ORT runtime is the last artefact still fetched from an external source (Microsoft GitHub Releases). Mirror the platform `.tgz` files into `cattery-artefacts`, register in `mirror.json`, and update `downloadORT()` to use mirrors. This gives cattery 100% artefact independence from external hosts.
+All artefacts (ORT, models, voices, espeak) now self-hosted in `cattery-artefacts`. Microsoft ORT URL retained as fallback only.
 
 ### Open
 
-- **Mirror ORT into cattery-artefacts** — last external download dependency (P1, next session)
 - **#12 LLM proxy** — unified AI backend (`cattery think`); may merge with #13's server endpoint
 - **#07** License compliance follow-through (now includes Qwen3.5 Apache-2.0)
 - **#33** Enable GH Actions PR permission (one-time repo setting, P3)
@@ -142,7 +142,7 @@ Registry currently includes 27 voices. Downloaded artefacts are cached in `~/.ca
 - **Separate artefacts repo**: `cattery-artefacts` holds binaries via Git LFS. No auth. All models (TTS + STT) self-hosted — no HuggingFace dependency.
 - **Artefacts path = repo layout**: model cache lives at `~/.cattery/artefacts/models/`, matching the `cattery-artefacts` repo tree. `git clone cattery-artefacts ~/.cattery/artefacts` gives instant offline — no downloads needed.
 - **mirror.json**: `cattery-artefacts/mirror.json` lists every artefact with size, SHA256, and ordered mirror URLs. Downloaded once per process; graceful fallback if unavailable. Mirrors support a `"default": true` flag to prefer S3/R2 over GitHub without changing array order. Adding a mirror is a one-line JSON edit, no code release.
-- **ORT from Microsoft**: not mirrored — their GitHub Release URLs are permanent. Currently on v1.24.4. Linux amd64 asset uses `x64` (not `x86_64`) in filename; macOS ships arm64-only since ORT 1.20+; arch mapping is per-OS in `download/download.go`.
+- **ORT mirrored in cattery-artefacts**: ORT v1.24.4 `.tgz` files for linux-x64, linux-aarch64, macOS-arm64 live in `ort/v1.24.4/` (Git LFS). `downloadORT()` uses `LookupRaw` + `downloadWithBar` — same pattern as espeak. Microsoft GitHub Release URL kept as fallback for new versions before mirror.json is updated. Linux amd64 asset uses `x64` (not `x86_64`) in filename; macOS ships arm64-only since ORT 1.20+; arch mapping is per-OS in `download/download.go`.
 - **`scripts/install.sh`**: builds `./cmd/cattery` and drops it into `$HOME/.local/bin` (overrideable via `INSTALL_DIR`). Run after every local build.
 - **espeak-ng via os/exec**: simplest phonemizer. WASM embed deferred.
 - **Random voice by default**: no voice flag = random pick; `--male`/`--female` to filter.
